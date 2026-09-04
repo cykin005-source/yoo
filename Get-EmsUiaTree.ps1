@@ -44,17 +44,34 @@ $OutPath = Join-Path $ScriptDir "ems_uia_tree.txt"
 $InterestingControlTypes = @('Edit', 'Button', 'Text', 'DataItem', 'ListItem', 'Document', 'ComboBox', 'CheckBox')
 
 # ===================================================================
-# 1. 대상 창 찾기 (제목이 없으면 후보 목록만 보여주고 종료)
+# 1. 대상 창 찾기 - 실행 중인 엣지(msedge.exe) 창만 대상으로 함
+#    (제목이 없으면 엣지 창 후보 목록만 보여주고 종료)
 # ===================================================================
+
+$edgeProcessIds = @(Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+if ($edgeProcessIds.Count -eq 0) {
+    Write-Host "실행 중인 Microsoft Edge(msedge.exe) 프로세스를 찾지 못했습니다. Edge를 먼저 열어주세요."
+    return
+}
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $windowCondition = New-Object System.Windows.Automation.PropertyCondition(
     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
     [System.Windows.Automation.ControlType]::Window)
-$allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition)
+$allTopLevelWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition)
+
+# 전체 창 중 프로세스가 msedge 인 것만 남김 (다른 프로그램 창이 섞이지 않도록)
+$allWindows = @($allTopLevelWindows | Where-Object {
+    try { $_.Current.ProcessId -in $edgeProcessIds } catch { $false }
+})
+
+if ($allWindows.Count -eq 0) {
+    Write-Host "Edge 프로세스는 실행 중이지만 UIA로 보이는 엣지 창이 없습니다. 창이 최소화되어 있지 않은지 확인해주세요."
+    return
+}
 
 if (-not $TitleContains) {
-    Write-Host "현재 열려있는 창 목록 (이 중 EMS 창 제목의 일부를 -TitleContains 로 넘겨주세요):"
+    Write-Host "현재 열려있는 엣지 창 목록 (이 중 EMS 창 제목의 일부를 -TitleContains 로 넘겨주세요):"
     foreach ($w in $allWindows) {
         try {
             Write-Host ("  PID={0,-8} 제목='{1}'" -f $w.Current.ProcessId, $w.Current.Name)
@@ -71,7 +88,7 @@ foreach ($w in $allWindows) {
 }
 
 if (-not $targetWindow) {
-    Write-Host "제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다. 아래 목록을 참고하세요:"
+    Write-Host "엣지 창 중에서 제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다. 아래 목록을 참고하세요:"
     foreach ($w in $allWindows) {
         try {
             Write-Host ("  PID={0,-8} 제목='{1}'" -f $w.Current.ProcessId, $w.Current.Name)

@@ -139,6 +139,13 @@ function New-ConditionFromConfig {
 function Find-EmsWindow {
     param([string]$TitleContains)
 
+    # 먼저 msedge.exe 프로세스의 PID 목록을 구해서, "엣지 창"만 대상으로 좁힙니다.
+    # (다른 프로그램 창의 제목이 우연히 겹쳐서 잘못 선택되는 것을 방지)
+    $edgeProcessIds = @(Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    if ($edgeProcessIds.Count -eq 0) {
+        throw "실행 중인 Microsoft Edge(msedge.exe) 프로세스를 찾지 못했습니다. Edge에서 EMS 페이지를 열어두었는지 확인하세요."
+    }
+
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $windowCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
@@ -149,6 +156,7 @@ function Find-EmsWindow {
     $matches = @()
     foreach ($w in $candidates) {
         try {
+            if ($w.Current.ProcessId -notin $edgeProcessIds) { continue }
             if ($w.Current.Name -like "*$TitleContains*") {
                 $matches += $w
             }
@@ -156,7 +164,7 @@ function Find-EmsWindow {
     }
 
     if ($matches.Count -eq 0) {
-        throw "제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다. EMS 페이지가 열려 있는지 확인하세요."
+        throw "실행 중인 엣지 창 중에서 제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다. EMS 페이지가 열려 있는지 확인하세요."
     }
     if ($matches.Count -gt 1) {
         Write-Log "경고: 제목이 일치하는 창이 $($matches.Count)개 발견됨. 첫 번째 창을 사용합니다."
