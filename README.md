@@ -37,6 +37,7 @@ EMS 화면의 입력창/버튼 Name·AutomationId를 아직 모른다면, EMS �
 
 - `$EmsWindowTitleContains`: EMS가 열린 Edge 창의 제목에 포함된 문자열
 - `EquipmentNameBox`, `AlarmCodeBox`, `SearchButton`, `AlarmNameBox`, `SaveButton`: 각 컨트롤의 AutomationId/Name/ControlType
+- `AlarmNameEditButton`: 알람명을 고치기 전에 눌러야 하는 수정 아이콘(gif 이미지). 이 아이콘은 Name/AutomationId/ClassName이 전부 비어있는 것으로 확인되어, ControlType(`Image`)만으로 그 행 안에서 찾도록 되어 있습니다(행 안에 이미지가 이거 하나뿐이라는 전제). 이름/아이디로는 못 찾으니 이 항목은 값을 채울 필요 없이 그대로 두면 됩니다.
 - `ResultAlarmCodeDisplay`: 조회 결과 표에서 알람코드가 표시되는 요소(결과 로드 판단 + 행 구분 + 저장 전 확인에 사용)
 - `SaveSuccessIndicator`: 저장 후 나타나는 "저장되었습니다" 류의 성공 메시지 요소 (필수 — 이게 안 뜨면 실패로 기록됨)
 - `$RowContainerAncestorLevels`: 결과 알람코드 요소에서 몇 단계 위로 올라가야 "그 행 전체"(알람명 입력창 + 저장 버튼 포함)가 나오는지. 테스트하면서 맞는 값을 찾으면 됩니다.
@@ -71,7 +72,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ## 처리 흐름 (한 행당)
 
 1. 장비명 입력 → 알람코드 입력 → 조회
-2. 결과 로드 대기 → 해당 행의 알람명 입력창에 새_알람명 입력
+2. 결과 로드 대기 → 해당 행의 수정 아이콘(gif) 클릭 → 알람명 입력창이 편집 가능해질 때까지 대기 → 새_알람명 입력
 3. 저장 전, 화면에 조회된 알람코드가 이 행의 알람코드와 일치하는지 재확인
 4. 저장 버튼 클릭 → "저장되었습니다" 류의 성공 메시지가 뜨는지 확인(5초 대기)
 5. **같은 장비명+알람코드로 다시 조회 → 화면에 표시된 알람명이 새_알람명과

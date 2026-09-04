@@ -49,6 +49,12 @@ $Config = @{
     AlarmNameBox     = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Edit" }   # 알람명 입력창(결과 행 내부)
     SaveButton       = @{ AutomationId = "TODO"; Name = "저장"; ControlType = "Button" } # 저장 버튼(결과 행 내부)
 
+    # 알람명을 고치려면 먼저 눌러야 하는 수정 아이콘(gif 이미지). Name/AutomationId/
+    # ClassName 이 전부 비어있는 것으로 확인되어(UIATreeInspector 격 도구로도 이름표가
+    # 안 잡힘) Name/AutomationId 로는 찾을 수 없음. 대신 그 행 안에는 이 이미지가
+    # 하나뿐이라고 확인했으므로, ControlType(Image)만으로 행 범위 안에서 찾음.
+    AlarmNameEditButton = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Image" }
+
     # 조회 결과가 로드됐는지 + 어느 행인지 판단하기 위한 "결과 알람코드 표시" 요소.
     # 보통 결과 표(그리드)에 알람코드 값이 텍스트로 표시되는 셀입니다.
     ResultAlarmCodeDisplay = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Text" }
@@ -373,10 +379,18 @@ function Process-Row {
         # 1~4) 장비명/알람코드 입력 → 조회 → 결과 로드 대기 → 행 컨테이너 확보
         $rowContainer = Invoke-EmsSearchAndGetRow -Window $Window -EquipmentName $Row.장비명 -AlarmCode $Row.알람코드
 
-        # 5) 알람명 입력창 (해당 행 범위 안에서만 검색 - 중복 이름 대응)
+        # 5-1) 수정 아이콘(gif) 클릭 - 이 EMS 화면은 알람명을 바로 못 고치고, 먼저
+        #      행 안의 수정 아이콘을 눌러야 입력창이 편집 가능한 상태가 됨.
+        #      이 아이콘은 Name/AutomationId가 없어 ControlType(Image)만으로 찾음.
+        $cond = New-ConditionFromConfig $Config.AlarmNameEditButton
+        $editButtonEl = Find-ElementNow -Parent $rowContainer -Condition $cond
+        if (-not $editButtonEl) { throw "행 내에서 알람명 수정 아이콘(이미지)을 찾지 못했습니다." }
+        Invoke-UiaClick -Element $editButtonEl
+
+        # 5-2) 알람명 입력창이 편집 가능한 상태로 나타날 때까지 대기 (해당 행 범위 안에서만 검색)
         $cond = New-ConditionFromConfig $Config.AlarmNameBox
-        $alarmNameEl = Find-ElementNow -Parent $rowContainer -Condition $cond
-        if (-not $alarmNameEl) { throw "행 내에서 알람명 입력창을 찾지 못했습니다. RowContainerAncestorLevels 값을 조정해보세요." }
+        $alarmNameEl = Wait-UIAElement -Parent $rowContainer -Condition $cond -TimeoutSec $TimeoutSec
+        if (-not $alarmNameEl) { throw "수정 아이콘 클릭 후 알람명 입력창을 찾지 못했습니다. RowContainerAncestorLevels 값을 조정해보세요." }
         Set-UiaValue -Element $alarmNameEl -Value $Row.새_알람명
 
         # 6) 저장 전 최종 확인: 화면에 조회된 알람코드가 지금 처리 중인 행과 일치하는지 재확인

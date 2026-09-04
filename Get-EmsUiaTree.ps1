@@ -41,7 +41,7 @@ Add-Type -AssemblyName UIAutomationTypes
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $OutPath = Join-Path $ScriptDir "ems_uia_tree.txt"
 
-$InterestingControlTypes = @('Edit', 'Button', 'Text', 'DataItem', 'ListItem', 'Document', 'ComboBox', 'CheckBox')
+$InterestingControlTypes = @('Edit', 'Button', 'Text', 'DataItem', 'ListItem', 'Document', 'ComboBox', 'CheckBox', 'Image')
 
 # ===================================================================
 # 1. 대상 창 찾기 - 실행 중인 엣지(msedge.exe) 창만 대상으로 함
