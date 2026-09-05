@@ -48,10 +48,9 @@ $PopupWindowTitleContains  = "Search and Select List of Values"  # 값 선택 �
 $Config = @{
     EquipmentNameBox   = @{ AutomationId = "SEmNo";                          Name = "TODO";                     ControlType = "Edit" }
     AlarmCodeBox       = @{ AutomationId = "SPlcErrCode";                    Name = "TODO";                     ControlType = "Edit" }
-    # "찾아보기" 링크. 정확한 전체 문구가 입력 시점에 따라 조금씩 달라질 수 있어
-    # (예: 값이 뒤에 붙는 등) 정확히 일치가 아니라 이 키워드가 "포함"되어 있으면
-    # 찾도록 함(아래 Wait-ForNearestLookupLink 에서 -like로 검사).
-    LookupLink         = @{ AutomationId = "TODO";                           Name = "설비 에러 코드";           ControlType = "Hyperlink" }
+    # "찾아보기" 링크. 정확한 전체 이름으로 되돌림(포함 여부로 찾는 방식은 유지 -
+    # 아래 Wait-ForNearestLookupLink 에서 -like로 검사하므로 전체 문구를 넣어도 안전).
+    LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
     PopupRadioItem     = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "RadioButton" }
     PopupConfirmButton = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "Button" }
     SearchButton       = @{ AutomationId = "Find";                          Name = "조회";                     ControlType = "Button" }
