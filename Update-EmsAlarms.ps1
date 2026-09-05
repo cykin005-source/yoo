@@ -402,6 +402,7 @@ function Invoke-SearchAndOpenUpdateScreen {
     $alarmCodeEl = Find-ElementNow -Parent $MainWindow -Condition $cond
     if (-not $alarmCodeEl) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
     Set-UiaValue -Element $alarmCodeEl -Value $AlarmCode
+    Start-Sleep -Milliseconds 400   # 알람코드 입력 시 자동 채워지는 설비에러명과의 충돌 방지용 딜레이
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
     #    같은 이름의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있는 것으로
