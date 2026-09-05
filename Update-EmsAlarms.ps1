@@ -48,6 +48,10 @@ $PopupWindowTitleContains  = "Search and Select List of Values"  # 값 선택 �
 $Config = @{
     EquipmentNameBox   = @{ AutomationId = "SEmNo";                          Name = "TODO";                     ControlType = "Edit" }
     AlarmCodeBox       = @{ AutomationId = "SPlcErrCode";                    Name = "TODO";                     ControlType = "Edit" }
+    # 알람코드 입력 후 자동으로 채워지는 설비 에러명 표시란. 이 값이 실제로
+    # 채워졌는지 확인한 뒤에 찾아보기를 눌러야 타이밍 충돌이 없음(고정 딜레이 대신
+    # 이 값이 채워질 때까지 폴링).
+    AutoFilledErrDescBox = @{ AutomationId = "SPlcErrDesc";                  Name = "TODO";                     ControlType = "Edit" }
     # "찾아보기" 링크. 정확한 전체 이름으로 되돌림(포함 여부로 찾는 방식은 유지 -
     # 아래 Wait-ForNearestLookupLink 에서 -like로 검사하므로 전체 문구를 넣어도 안전).
     LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
@@ -346,6 +350,28 @@ function Get-ElementDisplayValue {
     return $Element.Current.Name
 }
 
+# 알람코드 입력 후 자동으로 채워지는 필드(예: 설비 에러명 표시란)에 실제로
+# 값이 들어왔는지 확인될 때까지 폴링 대기. 고정 딜레이 대신 사용.
+function Wait-ForElementValueNonEmpty {
+    param(
+        [System.Windows.Automation.AutomationElement]$Parent,
+        [System.Windows.Automation.Condition]$Condition,
+        [int]$TimeoutSec = 10
+    )
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+        $el = Find-ElementNow -Parent $Parent -Condition $Condition
+        if ($el) {
+            try {
+                $val = Get-ElementDisplayValue -Element $el
+                if ($val -and $val.Trim() -ne "") { return $true }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds $PollingIntervalMs
+    }
+    return $false
+}
+
 # ===================================================================
 # 5. 값 입력 / 클릭 / 선택
 # ===================================================================
@@ -436,7 +462,12 @@ function Invoke-SearchAndOpenUpdateScreen {
     $alarmCodeEl = Find-ElementNow -Parent $MainWindow -Condition $cond
     if (-not $alarmCodeEl) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
     Set-UiaValue -Element $alarmCodeEl -Value $AlarmCode
-    Start-Sleep -Milliseconds 400   # 알람코드 입력 시 자동 채워지는 설비에러명과의 충돌 방지용 딜레이
+
+    # 알람코드 입력 시 자동으로 채워지는 설비 에러명(SPlcErrDesc)에 실제 값이
+    # 들어올 때까지 대기 (고정 딜레이 대신, 실제 채워졌는지 확인 후 다음 단계 진행)
+    $cond = New-ConditionFromConfig $Config.AutoFilledErrDescBox
+    $filled = Wait-ForElementValueNonEmpty -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $filled) { throw "설비 에러명 자동 입력(SPlcErrDesc)이 채워지는 것을 확인하지 못했습니다." }
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
     #    같은 이름 계열의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있고,
