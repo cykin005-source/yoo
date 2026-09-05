@@ -56,6 +56,10 @@ $Config = @{
     AlarmNameBox       = @{ AutomationId = "cPlcErrDesc";                    Name = "TODO";                     ControlType = "Edit" }
     StatusBox          = @{ AutomationId = "NStatus";                       Name = "TODO";                     ControlType = "Edit" }
     GenerateButton     = @{ AutomationId = "NGenerate";                     Name = "생성";                     ControlType = "Button" }
+    # "생성" 클릭 후 표준 에러 설명이 표시되는 곳(span id=NStandardErrorDesc). 이
+    # 안에 새_알람명이 들어있으면 성공으로 판단. 실제 UIA ControlType이 Text가
+    # 아닐 수도 있어(예: Group/Pane) ControlType 조건은 걸지 않고 AutomationId로만 찾음.
+    GeneratedTextDisplay = @{ AutomationId = "NStandardErrorDesc";          Name = "TODO";                     ControlType = "TODO" }
     SaveButton         = @{ AutomationId = "SaveButton";                    Name = "저장";                     ControlType = "Button" }
     ErrorListLink      = @{ AutomationId = "XXEMSSTD052";                   Name = "Error List";               ControlType = "Hyperlink" }
 }
@@ -243,24 +247,22 @@ function Wait-UIAElement {
     return $null
 }
 
-# "생성" 버튼 클릭 후, 화면 어딘가의 Text 요소 중 $Substring 을 포함하는 것이
-# 나타날 때까지 대기 (해당 요소의 Name/AutomationId가 없어 내용으로만 판단)
-function Wait-ForTextContaining {
+# "생성" 버튼 클릭 후, 특정 요소(조건으로 지정)의 표시값에 $Substring 이
+# 포함될 때까지 대기 (표준 에러 설명란(NStandardErrorDesc)에 새 알람명이
+# 반영됐는지 확인하는 용도)
+function Wait-ForElementTextContaining {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
+        [System.Windows.Automation.Condition]$Condition,
         [string]$Substring,
         [int]$TimeoutSec = 10
     )
-    $textCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Text)
-
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        $candidates = $Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition)
-        foreach ($c in $candidates) {
+        $el = Find-ElementNow -Parent $Parent -Condition $Condition
+        if ($el) {
             try {
-                $val = Get-ElementDisplayValue -Element $c
+                $val = Get-ElementDisplayValue -Element $el
                 if ($val -and $val.Contains($Substring)) { return $true }
             } catch { }
         }
@@ -440,10 +442,11 @@ function Set-AlarmNameAndSave {
     if (-not $genEl) { throw "생성 버튼을 찾지 못했습니다." }
     Invoke-UiaClick -Element $genEl
 
-    # 저장 전 확인: 생성된 텍스트에 새 알람명이 포함되는지 확인
-    $found = Wait-ForTextContaining -Parent $MainWindow -Substring $NewAlarmName -TimeoutSec $GenerateVerifyTimeoutSec
+    # 저장 전 확인: 표준 에러 설명란(NStandardErrorDesc)에 새 알람명이 포함되는지 확인
+    $cond = New-ConditionFromConfig $Config.GeneratedTextDisplay
+    $found = Wait-ForElementTextContaining -Parent $MainWindow -Condition $cond -Substring $NewAlarmName -TimeoutSec $GenerateVerifyTimeoutSec
     if (-not $found) {
-        throw "'생성' 후 확인 텍스트에서 '$NewAlarmName' 을 찾지 못했습니다. 저장하지 않고 실패 처리합니다."
+        throw "'생성' 후 표준 에러 설명란(NStandardErrorDesc)에서 '$NewAlarmName' 을 찾지 못했습니다. 저장하지 않고 실패 처리합니다."
     }
 
     # 저장 버튼 클릭
