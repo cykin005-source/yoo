@@ -50,9 +50,12 @@ $Config = @{
     SaveButton       = @{ AutomationId = "TODO"; Name = "저장"; ControlType = "Button" } # 저장 버튼(결과 행 내부)
 
     # 알람명을 고치려면 먼저 눌러야 하는 수정 아이콘(gif 이미지). Name/AutomationId/
-    # ClassName 이 전부 비어있는 것으로 확인되어(UIATreeInspector 격 도구로도 이름표가
-    # 안 잡힘) Name/AutomationId 로는 찾을 수 없음. 대신 그 행 안에는 이 이미지가
-    # 하나뿐이라고 확인했으므로, ControlType(Image)만으로 행 범위 안에서 찾음.
+    # ClassName 이 전부 비어있는 것으로 확인되어 Name/AutomationId 로는 찾을 수 없음.
+    # 대신 그 행 안에는 이 이미지가 하나뿐이라고 확인했으므로, ControlType(Image)만으로
+    # 행 범위 안에서 이미지 자체를 찾는다. (실제 클릭은 이 이미지가 아니라, 이 이미지를
+    # 찾은 뒤 위로 올라가며 찾는 "InvokePattern을 지원하는 부모"에 대해 수행됨 -
+    # Find-ClickableAncestor 함수 참고. 이미지 자체는 InvokePattern/LegacyIAccessible
+    # 둘 다 미지원으로 확인됨)
     AlarmNameEditButton = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Image" }
 
     # 조회 결과가 로드됐는지 + 어느 행인지 판단하기 위한 "결과 알람코드 표시" 요소.
@@ -248,6 +251,32 @@ function Get-RowContainer {
     return $current
 }
 
+# 이미지(gif) 자체는 클릭 이벤트가 없고, 그걸 감싸는 부모(틀) 쪽에 실제 클릭 동작이
+# 걸려있는 경우를 위한 함수. $Element에서 위로 올라가면서 InvokePattern을 지원하는
+# 첫 번째 조상을 찾아 반환한다(RawView 기준 - Get-ElementAtCursor.ps1로 확인한 것과
+# 같은 부모 체인을 보기 위함). 못 찾으면 $null.
+function Find-ClickableAncestor {
+    param(
+        [System.Windows.Automation.AutomationElement]$Element,
+        [int]$MaxLevels = 5
+    )
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $invokePatternObj = Get-PatternObjectSafe -PatternClassName "InvokePattern"
+    if (-not $invokePatternObj) { return $null }
+
+    $current = $Element
+    for ($i = 0; $i -lt $MaxLevels; $i++) {
+        $parent = $walker.GetParent($current)
+        if (-not $parent) { return $null }
+        $p = $null
+        if ($parent.TryGetCurrentPattern($invokePatternObj, [ref]$p)) {
+            return $parent
+        }
+        $current = $parent
+    }
+    return $null
+}
+
 # ValuePattern 을 지원하면 그 값을, 아니면 Name 속성을 화면 표시값으로 간주
 function Get-ElementDisplayValue {
     param([System.Windows.Automation.AutomationElement]$Element)
@@ -406,9 +435,15 @@ function Process-Row {
         # 5-1) 수정 아이콘(gif) 클릭 - 이 EMS 화면은 알람명을 바로 못 고치고, 먼저
         #      행 안의 수정 아이콘을 눌러야 입력창이 편집 가능한 상태가 됨.
         #      이 아이콘은 Name/AutomationId가 없어 ControlType(Image)만으로 찾음.
+        #      이미지 자체는 InvokePattern/LegacyIAccessiblePattern을 둘 다 지원하지
+        #      않는 것으로 확인됨(클릭 이벤트가 이미지가 아니라 그걸 감싸는 부모에
+        #      걸려있음). 그래서 이미지를 찾은 뒤, 위로 올라가면서 InvokePattern을
+        #      지원하는 가장 가까운 부모(틀)를 찾아 그걸 클릭한다.
         $cond = New-ConditionFromConfig $Config.AlarmNameEditButton
-        $editButtonEl = Find-ElementNow -Parent $rowContainer -Condition $cond
-        if (-not $editButtonEl) { throw "행 내에서 알람명 수정 아이콘(이미지)을 찾지 못했습니다." }
+        $editIconEl = Find-ElementNow -Parent $rowContainer -Condition $cond
+        if (-not $editIconEl) { throw "행 내에서 알람명 수정 아이콘(이미지)을 찾지 못했습니다." }
+        $editButtonEl = Find-ClickableAncestor -Element $editIconEl -MaxLevels 5
+        if (-not $editButtonEl) { throw "수정 아이콘을 감싸는, 클릭 가능한(InvokePattern 지원) 부모 요소를 찾지 못했습니다." }
         Invoke-UiaClick -Element $editButtonEl
 
         # 5-2) 알람명 입력창이 편집 가능한 상태로 나타날 때까지 대기 (해당 행 범위 안에서만 검색)

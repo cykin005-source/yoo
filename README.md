@@ -76,7 +76,7 @@ Name/AutomationId가 비어있는 요소도 부모 쪽에 식별 정보가 있�
 
 - `$EmsWindowTitleContains`: EMS가 열린 Edge 창의 제목에 포함된 문자열
 - `EquipmentNameBox`, `AlarmCodeBox`, `SearchButton`, `AlarmNameBox`, `SaveButton`: 각 컨트롤의 AutomationId/Name/ControlType
-- `AlarmNameEditButton`: 알람명을 고치기 전에 눌러야 하는 수정 아이콘(gif 이미지). 이 아이콘은 Name/AutomationId/ClassName이 전부 비어있는 것으로 확인되어, ControlType(`Image`)만으로 그 행 안에서 찾도록 되어 있습니다(행 안에 이미지가 이거 하나뿐이라는 전제). 이름/아이디로는 못 찾으니 이 항목은 값을 채울 필요 없이 그대로 두면 됩니다.
+- `AlarmNameEditButton`: 알람명을 고치기 전에 눌러야 하는 수정 아이콘(gif 이미지). 이 아이콘은 Name/AutomationId/ClassName이 전부 비어있는 것으로 확인되어, ControlType(`Image`)만으로 그 행 안에서 찾도록 되어 있습니다(행 안에 이미지가 이거 하나뿐이라는 전제). 이름/아이디로는 못 찾으니 이 항목은 값을 채울 필요 없이 그대로 두면 됩니다. (실제 클릭은 이미지 자체가 아니라, 이미지의 부모 중 InvokePattern을 지원하는 첫 번째 요소에 대해 자동으로 수행됩니다 - 이미지 자체는 클릭 이벤트가 없고 그걸 감싸는 부모 쪽에 클릭 동작이 걸려있는 것으로 확인됨)
 - `ResultAlarmCodeDisplay`: 조회 결과 표에서 알람코드가 표시되는 요소(결과 로드 판단 + 행 구분 + 저장 전 확인에 사용)
 - `SaveSuccessIndicator`: 저장 후 나타나는 "저장되었습니다" 류의 성공 메시지 요소 (필수 — 이게 안 뜨면 실패로 기록됨)
 - `$RowContainerAncestorLevels`: 결과 알람코드 요소에서 몇 단계 위로 올라가야 "그 행 전체"(알람명 입력창 + 저장 버튼 포함)가 나오는지. 테스트하면서 맞는 값을 찾으면 됩니다.
