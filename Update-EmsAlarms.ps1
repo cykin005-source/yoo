@@ -232,6 +232,37 @@ function Find-ElementNow {
     return $Parent.FindFirst($Scope, $Condition)
 }
 
+# 같은 Name/ControlType 을 가진 요소가 화면에 여러 개(다른 필드용 "찾아보기"
+# 링크처럼) 있을 때, 기준 요소($ReferenceElement, 예: 알람코드 입력창)와
+# 세로 위치(Y)가 가장 가까운 것을 골라 반환한다.
+function Find-NearestElementByCondition {
+    param(
+        [System.Windows.Automation.AutomationElement]$Parent,
+        [System.Windows.Automation.Condition]$Condition,
+        [System.Windows.Automation.AutomationElement]$ReferenceElement
+    )
+    $candidates = $Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $Condition)
+    if ($candidates.Count -eq 0) { return $null }
+
+    $refRect = $ReferenceElement.Current.BoundingRectangle
+    $refY = $refRect.Y + ($refRect.Height / 2)
+
+    $best = $null
+    $bestDist = [double]::MaxValue
+    foreach ($c in $candidates) {
+        try {
+            $r = $c.Current.BoundingRectangle
+            $cy = $r.Y + ($r.Height / 2)
+            $dist = [math]::Abs($cy - $refY)
+            if ($dist -lt $bestDist) {
+                $bestDist = $dist
+                $best = $c
+            }
+        } catch { }
+    }
+    return $best
+}
+
 function Wait-UIAElement {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
@@ -368,13 +399,15 @@ function Invoke-SearchAndOpenUpdateScreen {
     Set-UiaValue -Element $el -Value $EquipmentName
 
     $cond = New-ConditionFromConfig $Config.AlarmCodeBox
-    $el = Find-ElementNow -Parent $MainWindow -Condition $cond
-    if (-not $el) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
-    Set-UiaValue -Element $el -Value $AlarmCode
+    $alarmCodeEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $alarmCodeEl) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
+    Set-UiaValue -Element $alarmCodeEl -Value $AlarmCode
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
+    #    같은 이름의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있는 것으로
+    #    확인되어, 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
     $cond = New-ConditionFromConfig $Config.LookupLink
-    $el = Find-ElementNow -Parent $MainWindow -Condition $cond
+    $el = Find-NearestElementByCondition -Parent $MainWindow -Condition $cond -ReferenceElement $alarmCodeEl
     if (-not $el) { throw "찾아보기 링크(Search: 설비 에러 코드)를 찾지 못했습니다." }
     Invoke-UiaClick -Element $el
 
