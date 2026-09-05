@@ -94,6 +94,25 @@ function Write-Log {
     Add-Content -Path $LogPath -Value $line
 }
 
+# 진단용: 클릭 직전에 실제로 어떤 요소를 골랐는지(위치/이름/AutomationId 등)
+# 로그에 남긴다. 손으로 확인한 요소와 같은 것인지 대조하는 용도.
+function Write-ElementDebugInfo {
+    param(
+        [System.Windows.Automation.AutomationElement]$Element,
+        [string]$Label
+    )
+    $ct = "?"; $name = ""; $autoId = ""; $className = ""; $rectStr = ""
+    try { $ct = ($Element.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '') } catch { }
+    try { $name = $Element.Current.Name } catch { }
+    try { $autoId = $Element.Current.AutomationId } catch { }
+    try { $className = $Element.Current.ClassName } catch { }
+    try {
+        $r = $Element.Current.BoundingRectangle
+        $rectStr = "{0:F0},{1:F0},{2:F0},{3:F0}" -f $r.X, $r.Y, $r.Width, $r.Height
+    } catch { }
+    Write-Log "[진단:$Label] ControlType=$ct Name='$name' AutomationId='$autoId' ClassName='$className' BoundingRect(X,Y,W,H)=$rectStr"
+}
+
 # ===================================================================
 # 2. 조건(Condition) / 패턴 헬퍼
 # ===================================================================
@@ -426,6 +445,7 @@ function Invoke-SearchAndOpenUpdateScreen {
     $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
         -NameContains $Config.LookupLink.Name -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "찾아보기 링크('$($Config.LookupLink.Name)' 포함)를 찾지 못했습니다." }
+    Write-ElementDebugInfo -Element $el -Label "찾아보기 링크(클릭 대상)"
     Invoke-UiaClick -Element $el
 
     $popup = Wait-ForPopupWindow -TitleContains $PopupWindowTitleContains -TimeoutSec $TimeoutSec
