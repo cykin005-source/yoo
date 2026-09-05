@@ -398,9 +398,15 @@ function Invoke-UiaClick {
     if ($invokePatternObj) {
         $invokePattern = $null
         if ($Element.TryGetCurrentPattern($invokePatternObj, [ref]$invokePattern)) {
+            Write-Log "[Invoke-UiaClick] InvokePattern.Invoke() 호출 시도"
             $invokePattern.Invoke()
+            Write-Log "[Invoke-UiaClick] InvokePattern.Invoke() 호출 완료(예외 없음)"
             return
+        } else {
+            Write-Log "[Invoke-UiaClick] InvokePattern 타입은 있으나 이 요소는 미지원(TryGetCurrentPattern=false)"
         }
+    } else {
+        Write-Log "[Invoke-UiaClick] InvokePattern 타입 자체를 찾지 못함"
     }
 
     # InvokePattern 미지원 요소에 대한 대안: LegacyIAccessiblePattern.DoDefaultAction()
@@ -408,9 +414,15 @@ function Invoke-UiaClick {
     if ($legacyPatternObj) {
         $legacyPattern = $null
         if ($Element.TryGetCurrentPattern($legacyPatternObj, [ref]$legacyPattern)) {
+            Write-Log "[Invoke-UiaClick] LegacyIAccessiblePattern.DoDefaultAction() 호출 시도"
             $legacyPattern.DoDefaultAction()
+            Write-Log "[Invoke-UiaClick] LegacyIAccessiblePattern.DoDefaultAction() 호출 완료(예외 없음)"
             return
+        } else {
+            Write-Log "[Invoke-UiaClick] LegacyIAccessiblePattern 타입은 있으나 이 요소는 미지원(TryGetCurrentPattern=false)"
         }
+    } else {
+        Write-Log "[Invoke-UiaClick] LegacyIAccessiblePattern 타입 자체를 찾지 못함"
     }
 
     throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다."
