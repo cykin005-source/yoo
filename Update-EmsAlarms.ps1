@@ -48,7 +48,10 @@ $PopupWindowTitleContains  = "Search and Select List of Values"  # 값 선택 �
 $Config = @{
     EquipmentNameBox   = @{ AutomationId = "SEmNo";                          Name = "TODO";                     ControlType = "Edit" }
     AlarmCodeBox       = @{ AutomationId = "SPlcErrCode";                    Name = "TODO";                     ControlType = "Edit" }
-    LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
+    # "찾아보기" 링크. 정확한 전체 문구가 입력 시점에 따라 조금씩 달라질 수 있어
+    # (예: 값이 뒤에 붙는 등) 정확히 일치가 아니라 이 키워드가 "포함"되어 있으면
+    # 찾도록 함(아래 Wait-ForNearestLookupLink 에서 -like로 검사).
+    LookupLink         = @{ AutomationId = "TODO";                           Name = "설비 에러 코드";           ControlType = "Hyperlink" }
     PopupRadioItem     = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "RadioButton" }
     PopupConfirmButton = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "Button" }
     SearchButton       = @{ AutomationId = "Find";                          Name = "조회";                     ControlType = "Button" }
@@ -232,51 +235,45 @@ function Find-ElementNow {
     return $Parent.FindFirst($Scope, $Condition)
 }
 
-# 같은 Name/ControlType 을 가진 요소가 화면에 여러 개(다른 필드용 "찾아보기"
-# 링크처럼) 있을 때, 기준 요소($ReferenceElement, 예: 알람코드 입력창)와
-# 세로 위치(Y)가 가장 가까운 것을 골라 반환한다.
-function Find-NearestElementByCondition {
+# "찾아보기" 링크 전용: 정확한 이름 일치가 아니라 키워드 포함 여부로 찾고,
+# 여러 개 중 기준 요소(알람코드 입력창)와 세로 위치가 가장 가까운 것을 고른다.
+# 화면 갱신 타이밍에 걸리는 경우를 대비해 타임아웃까지 폴링 재시도한다.
+function Wait-ForNearestLookupLink {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
-        [System.Windows.Automation.Condition]$Condition,
-        [System.Windows.Automation.AutomationElement]$ReferenceElement
-    )
-    $candidates = $Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $Condition)
-    if ($candidates.Count -eq 0) { return $null }
-
-    $refRect = $ReferenceElement.Current.BoundingRectangle
-    $refY = $refRect.Y + ($refRect.Height / 2)
-
-    $best = $null
-    $bestDist = [double]::MaxValue
-    foreach ($c in $candidates) {
-        try {
-            $r = $c.Current.BoundingRectangle
-            $cy = $r.Y + ($r.Height / 2)
-            $dist = [math]::Abs($cy - $refY)
-            if ($dist -lt $bestDist) {
-                $bestDist = $dist
-                $best = $c
-            }
-        } catch { }
-    }
-    return $best
-}
-
-# Find-NearestElementByCondition 은 한 번만 확인하고 끝나서, 화면이 자동입력
-# 처리로 잠깐 갱신되는 순간과 겹치면 놓칠 수 있음. 찾을 때까지(또는 타임아웃)
-# 폴링으로 재시도하는 버전.
-function Wait-ForNearestElementByCondition {
-    param(
-        [System.Windows.Automation.AutomationElement]$Parent,
-        [System.Windows.Automation.Condition]$Condition,
+        [string]$ControlTypeName,
+        [string]$NameContains,
         [System.Windows.Automation.AutomationElement]$ReferenceElement,
         [int]$TimeoutSec = 10
     )
+    $ct = Get-ControlTypeByName $ControlTypeName
+    $ctCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)
+    $refRect = $ReferenceElement.Current.BoundingRectangle
+    $refY = $refRect.Y + ($refRect.Height / 2)
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        $result = Find-NearestElementByCondition -Parent $Parent -Condition $Condition -ReferenceElement $ReferenceElement
-        if ($result) { return $result }
+        $candidates = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition) | Where-Object {
+            try { $_.Current.Name -like "*$NameContains*" } catch { $false }
+        })
+
+        if ($candidates.Count -gt 0) {
+            $best = $null
+            $bestDist = [double]::MaxValue
+            foreach ($c in $candidates) {
+                try {
+                    $r = $c.Current.BoundingRectangle
+                    $cy = $r.Y + ($r.Height / 2)
+                    $dist = [math]::Abs($cy - $refY)
+                    if ($dist -lt $bestDist) {
+                        $bestDist = $dist
+                        $best = $c
+                    }
+                } catch { }
+            }
+            if ($best) { return $best }
+        }
         Start-Sleep -Milliseconds $PollingIntervalMs
     }
     return $null
@@ -424,11 +421,12 @@ function Invoke-SearchAndOpenUpdateScreen {
     Start-Sleep -Milliseconds 400   # 알람코드 입력 시 자동 채워지는 설비에러명과의 충돌 방지용 딜레이
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
-    #    같은 이름의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있는 것으로
-    #    확인되어, 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
-    $cond = New-ConditionFromConfig $Config.LookupLink
-    $el = Wait-ForNearestElementByCondition -Parent $MainWindow -Condition $cond -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
-    if (-not $el) { throw "찾아보기 링크(Search: 설비 에러 코드)를 찾지 못했습니다." }
+    #    같은 이름 계열의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있고,
+    #    정확한 문구도 입력 시점에 따라 조금 달라질 수 있어 "포함" 여부로 찾고,
+    #    그 중 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
+    $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
+        -NameContains $Config.LookupLink.Name -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "찾아보기 링크('$($Config.LookupLink.Name)' 포함)를 찾지 못했습니다." }
     Invoke-UiaClick -Element $el
 
     $popup = Wait-ForPopupWindow -TitleContains $PopupWindowTitleContains -TimeoutSec $TimeoutSec
