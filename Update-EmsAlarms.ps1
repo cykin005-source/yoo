@@ -372,23 +372,18 @@ function Invoke-UiaClick {
     throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다."
 }
 
-# 일부 웹 화면은 InvokePattern으로 발생시킨 클릭(프로그램이 흉내 낸 클릭)을
-# 실제 사람의 클릭이 아니라고 판단해 무시하는 경우가 있음(포커스는 이동하지만
-# 실제 동작은 일어나지 않음). 이런 요소를 위해 LegacyIAccessiblePattern을
-# 먼저 시도하고, 안 되면 InvokePattern으로 대체하는 반대 순서 버전.
-function Invoke-UiaClickLegacyFirst {
+# 일부 웹 화면은 InvokePattern/LegacyIAccessiblePattern으로 발생시킨 클릭을
+# "프로그램이 흉내 낸 클릭"으로 판단해 무시하는 것으로 확인됨(포커스는
+# 이동하지만 실제 동작은 일어나지 않음). 이런 요소를 위한 최후 수단으로,
+# UIA로 정확히 그 요소에 포커스를 준 뒤 진짜 Enter 키 입력 하나를 보낸다.
+# 주의: 진짜 키 입력이 전달되려면 그 순간 EMS 창이 활성 창이 되어야 하므로,
+# 이 클릭 한 번에 한해서는 창이 화면 앞으로 올라올 수 있음.
+function Invoke-UiaClickViaKeyboard {
     param([System.Windows.Automation.AutomationElement]$Element)
 
-    $legacyPatternObj = Get-PatternObjectSafe -PatternClassName "LegacyIAccessiblePattern"
-    if ($legacyPatternObj) {
-        $legacyPattern = $null
-        if ($Element.TryGetCurrentPattern($legacyPatternObj, [ref]$legacyPattern)) {
-            $legacyPattern.DoDefaultAction()
-            return
-        }
-    }
-
-    Invoke-UiaClick -Element $Element
+    $Element.SetFocus()
+    Start-Sleep -Milliseconds 200
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 }
 
 # 라디오 버튼 선택 - 원래 동작(SelectionItemPattern.Select())을 우선 시도하고,
@@ -446,7 +441,7 @@ function Invoke-SearchAndOpenUpdateScreen {
     $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
         -NameContains $Config.LookupLink.Name -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "찾아보기 링크('$($Config.LookupLink.Name)' 포함)를 찾지 못했습니다." }
-    Invoke-UiaClickLegacyFirst -Element $el
+    Invoke-UiaClickViaKeyboard -Element $el
 
     $popup = Wait-ForPopupWindow -TitleContains $PopupWindowTitleContains -TimeoutSec $TimeoutSec
     if (-not $popup) { throw "값 선택 팝업(Search and Select List of Values)이 뜨지 않았습니다." }
