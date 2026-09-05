@@ -13,6 +13,10 @@
   텍스트 파일로 뽑아주는 진단 도구 (Accessibility Insights, UIATreeInspector
   등 별도 설치 프로그램을 쓸 수 없는 환경을 위한 대체 도구 — Windows 기본
   PowerShell만으로 동작)
+- `Get-ElementAtCursor.ps1`: 마우스를 원하는 요소 위에 놓고 Enter만 누르면
+  그 요소(+그 요소를 감싸는 부모/틀 몇 단계)의 정보를 바로 보여주는 도구.
+  `Get-EmsUiaTree.ps1`로 뽑은 전체 목록에서 "이게 내가 원하는 그 요소가
+  맞나?"를 대조하기 어려울 때 사용
 - `data.csv`: 처리할 데이터 샘플 템플릿
 - `.gitignore`: 실행 중 생기는 STOP.txt/result.csv/run.log/uia_tree_*.txt 등 제외
 
@@ -50,6 +54,21 @@ EMS 화면의 입력창/버튼 Name·AutomationId를 아직 모른다면, EMS �
 # 너무 깊이 들어가지 않고 얕게만 훑어보기
 .\Get-EmsUiaTree.ps1 -MaxDepth 8
 ```
+
+## 1-2단계 — 특정 요소가 맞는지 바로 대조하기 (선택)
+
+`uia_tree_*.txt`가 너무 커서 원하는 요소를 찾기 어려우면, `Get-ElementAtCursor.ps1`을
+쓰세요. 전체를 뒤질 필요 없이 **마우스로 직접 가리키기만** 하면 됩니다.
+
+```powershell
+.\Get-ElementAtCursor.ps1
+```
+
+실행 후 확인하고 싶은 요소(버튼/입력창/이미지 등) 위에 마우스를 놓고, 콘솔
+창으로 다시 포커스를 옮겨 Enter를 누르면 그 요소의 정보가 바로 출력됩니다.
+그 요소를 감싸는 부모(틀)도 몇 단계 위까지 같이 보여줘서, 이미지 버튼처럼
+Name/AutomationId가 비어있는 요소도 부모 쪽에 식별 정보가 있는지 바로 확인할
+수 있습니다. `q` 입력 후 Enter로 종료합니다.
 
 ## 2단계 — `$Config` 채우기 (`Update-EmsAlarms.ps1` 상단)
 
