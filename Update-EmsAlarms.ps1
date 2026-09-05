@@ -6,15 +6,24 @@
       있으므로 사용하지 않습니다.
     - .NET UI Automation(UIA) 만 사용. 추가 모듈/패키지 설치, 관리자 권한 불필요.
     - 좌표클릭 / SendKeys / Tab 이동 사용하지 않음. 전부 UIA 패턴 기반.
-    - 저장 후에는 같은 조건으로 재조회하여 실제로 값이 반영됐는지까지 확인합니다
-      (저장 성공 메시지만으로는 성공 처리하지 않음).
 
-    !!! 사용 전 필수 작업 !!!
-    아래 "0. 환경설정" 구역의 $Config 값들이 전부 TODO 로 되어 있습니다.
-    실제 화면의 요소 정보를 아직 모른다면, 같은 폴더의 Get-EmsUiaTree.ps1 을
-    먼저 실행해 요소 목록을 뽑아보세요(별도 설치 프로그램 없이 동작합니다).
-    확인한 Name/AutomationId/ControlType 값으로 $Config 를 채운 뒤 사용하세요.
-    채우지 않으면 스크립트가 요소를 찾지 못하고 타임아웃으로 실패 처리됩니다.
+    [실제 화면 흐름 - 실사용자 확인 완료]
+    1) "Search Error Code" 창에서 장비명(SEmNo) + 설비 에러 코드(SPlcErrCode) 입력
+    2) 찾아보기 링크 클릭 -> "Search and Select List of Values" 팝업이 뜸
+       (팝업 안의 라디오버튼은 항상 첫 번째가 정답 - 정확한 코드로 검색했으므로)
+    3) 팝업에서 첫 번째 라디오 선택 -> Select 버튼으로 확정 -> 팝업 닫힘
+    4) "조회" 버튼 클릭
+    5) 연필 모양 아이콘(Hyperlink, Invoke 지원 확인됨) 클릭
+       -> 같은 창 안에서 "Update Error Code" 화면으로 전환됨(새 창 아님)
+    6) 에러명(cPlcErrDesc) + 상태(NStatus)에 동일한 새 알람명 입력
+    7) "생성" 버튼 클릭 -> 생성된 텍스트에 새 알람명이 포함되는지 확인(저장 전 확인)
+    8) "저장" 버튼 클릭
+    9) "Error List" 링크 클릭 -> "Search Error Code" 화면으로 복귀
+    10) 저장이 실제로 반영됐는지 재검증: 1~5번을 다시 반복해서 에러명이
+        새 알람명과 일치하는지 확인 -> 다시 Error List로 복귀
+
+    처리 결과는 result.csv 파일에 행마다 즉시 추가 저장되고, 동시에 화면에 뜨는
+    실시간 결과 창(표)에도 즉시 반영됩니다.
 #>
 
 [CmdletBinding()]
@@ -24,72 +33,53 @@ param(
     [int]$TestModeRows = 2
 )
 
-# 실행 환경 확인: 반드시 Windows PowerShell 5.1(Desktop 에디션)에서 실행할 것.
-# PowerShell 7(Core 에디션)에서는 UIAutomationClient 로드/동작이 불안정할 수 있습니다.
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
-    Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다. 문제가 생기면 powershell.exe 로 실행해보세요."
+    Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
 }
 
 # ===================================================================
 # 0. 환경설정 - EMS 화면이 바뀌면 이 구역만 수정하면 됩니다.
 # ===================================================================
 
-# EMS 페이지가 열려있는 Edge "창"을 찾기 위한 기준(창 제목에 포함된 문자열).
-# 예: 창 제목이 "EMS 알람관리 - Microsoft Edge" 라면 "EMS" 로 설정.
-$EmsWindowTitleContains = "TODO: EMS 창 제목 일부"
+$EmsWindowTitleContains    = "Search Error Code"                 # 메인 창(장비명/에러코드 조회 화면)
+$PopupWindowTitleContains  = "Search and Select List of Values"  # 값 선택 팝업 창
 
-# 각 컨트롤 식별 정보. AutomationId 를 아는 경우 AutomationId 를 우선 사용하고,
-# 모르면 Name + ControlType 조합으로 찾습니다. 둘 다 비어있지 않으면 AND 조건으로 좁혀집니다.
-# ControlType 은 System.Windows.Automation.ControlType 의 정적 필드명을 문자열로 적으세요.
-# (자주 쓰는 값: Edit, Button, Text, DataItem, ListItem, Group, Pane, Document)
+# ControlType 은 System.Windows.Automation.ControlType 의 정적 필드명을 문자열로 적으면 됩니다.
 $Config = @{
-    EquipmentNameBox = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Edit" }   # 장비명 입력창
-    AlarmCodeBox     = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Edit" }   # 알람코드 입력창
-    SearchButton     = @{ AutomationId = "TODO"; Name = "조회"; ControlType = "Button" } # 조회 버튼
-    AlarmNameBox     = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Edit" }   # 알람명 입력창(결과 행 내부)
-    SaveButton       = @{ AutomationId = "TODO"; Name = "저장"; ControlType = "Button" } # 저장 버튼(결과 행 내부)
-
-    # 알람명을 고치려면 먼저 눌러야 하는 수정 아이콘(gif 이미지). Name/AutomationId/
-    # ClassName 이 전부 비어있는 것으로 확인되어 Name/AutomationId 로는 찾을 수 없음.
-    # 대신 그 행 안에는 이 이미지가 하나뿐이라고 확인했으므로, ControlType(Image)만으로
-    # 행 범위 안에서 이미지 자체를 찾는다. (실제 클릭은 이 이미지가 아니라, 이 이미지를
-    # 찾은 뒤 위로 올라가며 찾는 "InvokePattern을 지원하는 부모"에 대해 수행됨 -
-    # Find-ClickableAncestor 함수 참고. 이미지 자체는 InvokePattern/LegacyIAccessible
-    # 둘 다 미지원으로 확인됨)
-    AlarmNameEditButton = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Image" }
-
-    # 조회 결과가 로드됐는지 + 어느 행인지 판단하기 위한 "결과 알람코드 표시" 요소.
-    # 보통 결과 표(그리드)에 알람코드 값이 텍스트로 표시되는 셀입니다.
-    ResultAlarmCodeDisplay = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Text" }
-
-    # 저장 후 나타나는 "저장되었습니다" 류의 성공 메시지 요소. 필수입니다.
-    # (성공 메시지만으로는 최종 성공 처리하지 않고, 이후 재조회 검증까지 통과해야 최종 성공)
-    SaveSuccessIndicator = @{ AutomationId = "TODO"; Name = "TODO"; ControlType = "Text" }
+    EquipmentNameBox   = @{ AutomationId = "SEmNo";                          Name = "TODO";                     ControlType = "Edit" }
+    AlarmCodeBox       = @{ AutomationId = "SPlcErrCode";                    Name = "TODO";                     ControlType = "Edit" }
+    LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
+    PopupRadioItem     = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "RadioButton" }
+    PopupConfirmButton = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "Button" }
+    SearchButton       = @{ AutomationId = "Find";                          Name = "조회";                     ControlType = "Button" }
+    EditIconLink       = @{ AutomationId = "SearchAlarmCdTable:Update:0";    Name = "TODO";                     ControlType = "Hyperlink" }
+    AlarmNameBox       = @{ AutomationId = "cPlcErrDesc";                    Name = "TODO";                     ControlType = "Edit" }
+    StatusBox          = @{ AutomationId = "NStatus";                       Name = "TODO";                     ControlType = "Edit" }
+    GenerateButton     = @{ AutomationId = "NGenerate";                     Name = "생성";                     ControlType = "Button" }
+    SaveButton         = @{ AutomationId = "SaveButton";                    Name = "저장";                     ControlType = "Button" }
+    ErrorListLink      = @{ AutomationId = "XXEMSSTD052";                   Name = "Error List";               ControlType = "Hyperlink" }
 }
 
-# ResultAlarmCodeDisplay 요소에서 몇 단계 위로 올라가야 "그 행 전체"(알람명 입력창 +
-# 저장 버튼을 함께 포함하는 컨테이너)가 나오는지. 실제 EMS 표 구조를 보고 조정하세요.
-# (모르면 3~5 사이 값으로 시험해보면서 맞는 값을 찾으면 됩니다.)
-$RowContainerAncestorLevels = 4
-
-$TimeoutSec = 10             # 조회 결과 대기 타임아웃(초)
-$SaveConfirmTimeoutSec = 5   # 저장 성공 메시지 대기 타임아웃(초)
-$PollingIntervalMs = 300     # 폴링 간격(ms)
+$TimeoutSec             = 10   # 요소/화면전환 대기 타임아웃(초)
+$GenerateVerifyTimeoutSec = 5  # "생성" 후 확인 텍스트 대기 타임아웃(초)
+$PollingIntervalMs       = 300 # 폴링 간격(ms)
 
 # ===================================================================
 # 경로 설정
 # ===================================================================
-$ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DataCsvPath  = Join-Path $ScriptDir "data.csv"
+$ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
+$DataCsvPath   = Join-Path $ScriptDir "data.csv"
 $ResultCsvPath = Join-Path $ScriptDir "result.csv"
-$StopFlagPath = Join-Path $ScriptDir "STOP.txt"
-$LogPath      = Join-Path $ScriptDir "run.log"
+$StopFlagPath  = Join-Path $ScriptDir "STOP.txt"
+$LogPath       = Join-Path $ScriptDir "run.log"
 
 # ===================================================================
-# 1. UIA 어셈블리 로드 (Windows 기본 포함, 설치 불필요)
+# 1. 어셈블리 로드 (Windows 기본 포함, 설치 불필요)
 # ===================================================================
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 function Write-Log {
     param([string]$Message)
@@ -99,7 +89,7 @@ function Write-Log {
 }
 
 # ===================================================================
-# 2. 조건(Condition) 생성 헬퍼
+# 2. 조건(Condition) / 패턴 헬퍼
 # ===================================================================
 
 function Get-ControlTypeByName {
@@ -109,11 +99,8 @@ function Get-ControlTypeByName {
     return $field.GetValue($null)
 }
 
-# $Config 항목(해시테이블) 하나를 받아서 AutomationId/Name/ControlType 중
-# TODO 가 아닌 값들만으로 AND 조건을 만듭니다.
 function New-ConditionFromConfig {
     param([hashtable]$Item)
-
     $conditions = New-Object System.Collections.Generic.List[System.Windows.Automation.Condition]
 
     if ($Item.AutomationId -and $Item.AutomationId -ne "TODO") {
@@ -130,26 +117,35 @@ function New-ConditionFromConfig {
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)))
     }
 
-    if ($conditions.Count -eq 0) {
-        throw "요소 조건이 비어있습니다. `$Config 값을 채워주세요."
-    }
-    if ($conditions.Count -eq 1) {
-        return $conditions[0]
-    }
+    if ($conditions.Count -eq 0) { throw "요소 조건이 비어있습니다. `$Config 값을 채워주세요." }
+    if ($conditions.Count -eq 1) { return $conditions[0] }
     return New-Object System.Windows.Automation.AndCondition($conditions.ToArray())
 }
 
+# [System.Windows.Automation.LegacyIAccessiblePattern] 처럼 대괄호로 타입을 직접 쓰면,
+# 그 타입이 이 PC의 .NET 환경에 없을 때 try/catch로도 못 막는 에러가 나는 것이 실제
+# 확인됨. 리플렉션으로 "있으면 쓰고 없으면 조용히 실패"하게 우회.
+function Get-PatternObjectSafe {
+    param([string]$PatternClassName)
+    try {
+        $asm = [System.Windows.Automation.AutomationElement].Assembly
+        $type = $asm.GetType("System.Windows.Automation.$PatternClassName")
+        if (-not $type) { return $null }
+        $field = $type.GetField("Pattern", [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static)
+        if (-not $field) { return $null }
+        return $field.GetValue($null)
+    } catch {
+        return $null
+    }
+}
+
 # ===================================================================
-# 3. 대상 창 찾기 - PID 로 고정 (창 활성화/포커스 이동 없이)
-#    주의: EMS 창은 최소화하지 말 것. Chromium 기반 브라우저는 최소화 상태에서
-#    렌더링/접근성 트리 갱신이 늦어질 수 있음(다른 창 뒤에 두는 것은 무방).
+# 3. 창 찾기 - 메인 창은 PID 고정(엣지 프로세스만 대상), 팝업은 뜰 때마다 새로 찾음
 # ===================================================================
 
 function Find-EmsWindow {
     param([string]$TitleContains)
 
-    # 먼저 msedge.exe 프로세스의 PID 목록을 구해서, "엣지 창"만 대상으로 좁힙니다.
-    # (다른 프로그램 창의 제목이 우연히 겹쳐서 잘못 선택되는 것을 방지)
     $edgeProcessIds = @(Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     if ($edgeProcessIds.Count -eq 0) {
         throw "실행 중인 Microsoft Edge(msedge.exe) 프로세스를 찾지 못했습니다. Edge에서 EMS 페이지를 열어두었는지 확인하세요."
@@ -159,28 +155,64 @@ function Find-EmsWindow {
     $windowCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Window)
-
     $candidates = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition)
 
     $matches = @()
     foreach ($w in $candidates) {
         try {
-            if ($w.Current.ProcessId -notin $edgeProcessIds) { continue }
-            if ($w.Current.Name -like "*$TitleContains*") {
+            if (($w.Current.ProcessId -in $edgeProcessIds) -and ($w.Current.Name -like "*$TitleContains*")) {
                 $matches += $w
             }
         } catch { }
     }
 
     if ($matches.Count -eq 0) {
-        throw "실행 중인 엣지 창 중에서 제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다. EMS 페이지가 열려 있는지 확인하세요."
+        throw "실행 중인 엣지 창 중에서 제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다."
     }
     if ($matches.Count -gt 1) {
-        Write-Log "경고: 제목이 일치하는 창이 $($matches.Count)개 발견됨. 첫 번째 창을 사용합니다."
-        foreach ($m in $matches) { Write-Log "  후보 창: '$($m.Current.Name)' (PID=$($m.Current.ProcessId))" }
+        Write-Log "경고: 제목이 일치하는 엣지 창이 $($matches.Count)개 발견됨. 첫 번째 창을 사용합니다."
     }
-
     return $matches[0]
+}
+
+# 팝업(값 선택 창)이 뜰 때까지 폴링 대기 - 메인 창과 별개의 새 창이므로 매번 새로 탐색
+function Wait-ForPopupWindow {
+    param([string]$TitleContains, [int]$TimeoutSec = 10)
+
+    $edgeProcessIds = @(Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $windowCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Window)
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+        $candidates = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition)
+        foreach ($w in $candidates) {
+            try {
+                if (($w.Current.ProcessId -in $edgeProcessIds) -and ($w.Current.Name -like "*$TitleContains*")) {
+                    return $w
+                }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds $PollingIntervalMs
+    }
+    return $null
+}
+
+# 팝업 창이 닫혔는지 확인(스테일 요소 접근 시 예외가 나는 것을 이용)
+function Wait-ForWindowClosed {
+    param([System.Windows.Automation.AutomationElement]$Window, [int]$TimeoutSec = 10)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+        try {
+            $null = $Window.Current.ProcessId
+        } catch {
+            return $true
+        }
+        Start-Sleep -Milliseconds $PollingIntervalMs
+    }
+    return $false
 }
 
 # ===================================================================
@@ -211,70 +243,30 @@ function Wait-UIAElement {
     return $null
 }
 
-# 알람코드 값이 일치하는 결과 요소를 찾을 때까지 대기 (조회 결과 로드 판단 + 행 식별 겸용)
-function Wait-ResultRow {
+# "생성" 버튼 클릭 후, 화면 어딘가의 Text 요소 중 $Substring 을 포함하는 것이
+# 나타날 때까지 대기 (해당 요소의 Name/AutomationId가 없어 내용으로만 판단)
+function Wait-ForTextContaining {
     param(
-        [System.Windows.Automation.AutomationElement]$Window,
-        [string]$ExpectedAlarmCode,
+        [System.Windows.Automation.AutomationElement]$Parent,
+        [string]$Substring,
         [int]$TimeoutSec = 10
     )
-    $baseCondition = New-ConditionFromConfig $Config.ResultAlarmCodeDisplay
+    $textCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Text)
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        $candidates = $Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $baseCondition)
+        $candidates = $Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCondition)
         foreach ($c in $candidates) {
             try {
                 $val = Get-ElementDisplayValue -Element $c
-                if ($val -eq $ExpectedAlarmCode) {
-                    return $c
-                }
+                if ($val -and $val.Contains($Substring)) { return $true }
             } catch { }
         }
         Start-Sleep -Milliseconds $PollingIntervalMs
     }
-    return $null
-}
-
-# 결과 요소에서 위로 $Levels 단계 올라가 "행 컨테이너"를 반환
-function Get-RowContainer {
-    param(
-        [System.Windows.Automation.AutomationElement]$Element,
-        [int]$Levels
-    )
-    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-    $current = $Element
-    for ($i = 0; $i -lt $Levels; $i++) {
-        $parent = $walker.GetParent($current)
-        if (-not $parent) { break }
-        $current = $parent
-    }
-    return $current
-}
-
-# 이미지(gif) 자체는 클릭 이벤트가 없고, 그걸 감싸는 부모(틀) 쪽에 실제 클릭 동작이
-# 걸려있는 경우를 위한 함수. $Element에서 위로 올라가면서 InvokePattern을 지원하는
-# 첫 번째 조상을 찾아 반환한다(RawView 기준 - Get-ElementAtCursor.ps1로 확인한 것과
-# 같은 부모 체인을 보기 위함). 못 찾으면 $null.
-function Find-ClickableAncestor {
-    param(
-        [System.Windows.Automation.AutomationElement]$Element,
-        [int]$MaxLevels = 5
-    )
-    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-    $invokePatternObj = Get-PatternObjectSafe -PatternClassName "InvokePattern"
-    if (-not $invokePatternObj) { return $null }
-
-    $current = $Element
-    for ($i = 0; $i -lt $MaxLevels; $i++) {
-        $parent = $walker.GetParent($current)
-        if (-not $parent) { return $null }
-        $p = $null
-        if ($parent.TryGetCurrentPattern($invokePatternObj, [ref]$p)) {
-            return $parent
-        }
-        $current = $parent
-    }
-    return $null
+    return $false
 }
 
 # ValuePattern 을 지원하면 그 값을, 아니면 Name 속성을 화면 표시값으로 간주
@@ -288,7 +280,7 @@ function Get-ElementDisplayValue {
 }
 
 # ===================================================================
-# 5. 값 입력 (ValuePattern) - 입력 후 재확인 포함
+# 5. 값 입력 / 클릭 / 선택
 # ===================================================================
 
 function Set-UiaValue {
@@ -299,33 +291,10 @@ function Set-UiaValue {
     $pattern = $Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $pattern.SetValue($Value)
 
-    # 실제로 반영됐는지 재확인 (일부 웹 프레임워크는 SetValue 가 화면엔 보이되
-    # 내부 상태에 반영 안 되는 경우가 있어, 최소한 "표시값"은 확인합니다)
     Start-Sleep -Milliseconds 150
     $actual = $Element.GetCurrentPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty)
     if ($actual -ne $Value) {
         throw "값 입력 검증 실패 (입력='$Value', 실제='$actual')"
-    }
-}
-
-# ===================================================================
-# 6. 버튼 클릭 (InvokePattern 우선, 미지원 시 LegacyIAccessiblePattern)
-# ===================================================================
-
-# [System.Windows.Automation.LegacyIAccessiblePattern] 처럼 대괄호로 타입을 직접 쓰면,
-# 이 PC의 .NET 환경에 그 타입 자체가 없을 때 try/catch로도 못 막는 에러가 날 수 있음
-# (실제로 이 문제가 확인됨). 그래서 리플렉션으로 "있으면 쓰고 없으면 조용히 실패"하게 우회.
-function Get-PatternObjectSafe {
-    param([string]$PatternClassName)
-    try {
-        $asm = [System.Windows.Automation.AutomationElement].Assembly
-        $type = $asm.GetType("System.Windows.Automation.$PatternClassName")
-        if (-not $type) { return $null }
-        $field = $type.GetField("Pattern", [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static)
-        if (-not $field) { return $null }
-        return $field.GetValue($null)
-    } catch {
-        return $null
     }
 }
 
@@ -342,8 +311,6 @@ function Invoke-UiaClick {
     }
 
     # InvokePattern 미지원 요소에 대한 대안: LegacyIAccessiblePattern.DoDefaultAction()
-    # (오래된 웹 컨트롤/커스텀 컴포넌트가 IInvokeProvider 를 구현하지 않을 때 사용.
-    #  이 PC에 LegacyIAccessiblePattern 자체가 없으면 이 블록은 자동으로 건너뜀)
     $legacyPatternObj = Get-PatternObjectSafe -PatternClassName "LegacyIAccessiblePattern"
     if ($legacyPatternObj) {
         $legacyPattern = $null
@@ -353,11 +320,27 @@ function Invoke-UiaClick {
         }
     }
 
-    throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다(또는 이 PC에 LegacyIAccessiblePattern 자체가 없음)."
+    throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다."
+}
+
+# 라디오 버튼 선택 - 원래 동작(SelectionItemPattern.Select())을 우선 시도하고,
+# 미지원이면 클릭으로 대체
+function Select-UiaRadioButton {
+    param([System.Windows.Automation.AutomationElement]$Element)
+
+    $selPatternObj = Get-PatternObjectSafe -PatternClassName "SelectionItemPattern"
+    if ($selPatternObj) {
+        $sp = $null
+        if ($Element.TryGetCurrentPattern($selPatternObj, [ref]$sp)) {
+            $sp.Select()
+            return
+        }
+    }
+    Invoke-UiaClick -Element $Element
 }
 
 # ===================================================================
-# 7. 안전 정지(STOP.txt) 확인
+# 6. 안전 정지(STOP.txt) 확인
 # ===================================================================
 
 function Test-StopRequested {
@@ -365,146 +348,243 @@ function Test-StopRequested {
 }
 
 # ===================================================================
-# 8. 장비명+알람코드로 조회 실행 (1~3단계 공통 로직: 최초 조회 / 저장 후 재조회 둘 다 사용)
+# 7. 조회 + 팝업 선택 + 조회 + 연필클릭 -> Update Error Code 화면 진입
+#    (수정할 때, 재검증할 때 둘 다 이 루틴을 그대로 반복 사용)
 # ===================================================================
 
-function Invoke-EmsSearch {
+function Invoke-SearchAndOpenUpdateScreen {
     param(
-        [System.Windows.Automation.AutomationElement]$Window,
+        [System.Windows.Automation.AutomationElement]$MainWindow,
         [string]$EquipmentName,
         [string]$AlarmCode
     )
 
+    # 1) 장비명 + 알람코드 입력 (Search Error Code 화면)
     $cond = New-ConditionFromConfig $Config.EquipmentNameBox
-    $el = Find-ElementNow -Parent $Window -Condition $cond
-    if (-not $el) { throw "장비명 입력창을 찾지 못했습니다." }
+    $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "장비명 입력창(SEmNo)을 찾지 못했습니다." }
     Set-UiaValue -Element $el -Value $EquipmentName
 
     $cond = New-ConditionFromConfig $Config.AlarmCodeBox
-    $el = Find-ElementNow -Parent $Window -Condition $cond
-    if (-not $el) { throw "알람코드 입력창을 찾지 못했습니다." }
+    $el = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $el) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
     Set-UiaValue -Element $el -Value $AlarmCode
 
+    # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
+    $cond = New-ConditionFromConfig $Config.LookupLink
+    $el = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $el) { throw "찾아보기 링크(Search: 설비 에러 코드)를 찾지 못했습니다." }
+    Invoke-UiaClick -Element $el
+
+    $popup = Wait-ForPopupWindow -TitleContains $PopupWindowTitleContains -TimeoutSec $TimeoutSec
+    if (-not $popup) { throw "값 선택 팝업(Search and Select List of Values)이 뜨지 않았습니다." }
+
+    # 3) 팝업에서 첫 번째 라디오 선택 (정확한 코드로 검색했으므로 항상 첫 번째가 정답)
+    $cond = New-ConditionFromConfig $Config.PopupRadioItem
+    $radioEl = Wait-UIAElement -Parent $popup -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $radioEl) { throw "팝업에서 선택할 라디오 버튼을 찾지 못했습니다." }
+    Select-UiaRadioButton -Element $radioEl
+
+    # 4) 팝업의 Select 버튼으로 확정 -> 팝업이 닫힐 때까지 대기
+    $cond = New-ConditionFromConfig $Config.PopupConfirmButton
+    $confirmEl = Find-ElementNow -Parent $popup -Condition $cond
+    if (-not $confirmEl) { throw "팝업의 Select 확정 버튼을 찾지 못했습니다." }
+    Invoke-UiaClick -Element $confirmEl
+    Wait-ForWindowClosed -Window $popup -TimeoutSec $TimeoutSec | Out-Null
+
+    # 5) 조회 버튼 클릭
     $cond = New-ConditionFromConfig $Config.SearchButton
-    $el = Find-ElementNow -Parent $Window -Condition $cond
+    $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
     if (-not $el) { throw "조회 버튼을 찾지 못했습니다." }
     Invoke-UiaClick -Element $el
-}
 
-# 조회 실행 + 결과 로드 대기 + 행 컨테이너 확보를 한 번에 처리
-function Invoke-EmsSearchAndGetRow {
-    param(
-        [System.Windows.Automation.AutomationElement]$Window,
-        [string]$EquipmentName,
-        [string]$AlarmCode
-    )
+    # 6) 연필 모양 아이콘(Hyperlink, InvokePattern 지원 확인됨) 클릭
+    #    -> 클릭하면 같은 창 안에서 "Update Error Code" 화면으로 전환됨(새 창 아님)
+    $cond = New-ConditionFromConfig $Config.EditIconLink
+    $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "연필 모양 수정 아이콘을 찾지 못했습니다." }
+    Invoke-UiaClick -Element $el
 
-    Invoke-EmsSearch -Window $Window -EquipmentName $EquipmentName -AlarmCode $AlarmCode
+    # 7) Update Error Code 화면 전환 대기 (고정 딜레이 대신, 에러명 입력창이
+    #    나타나는 것으로 화면 전환 완료를 판단)
+    $cond = New-ConditionFromConfig $Config.AlarmNameBox
+    $alarmNameEl = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $alarmNameEl) { throw "Update Error Code 화면(에러명 입력창)으로 전환되지 않았습니다." }
 
-    $resultCell = Wait-ResultRow -Window $Window -ExpectedAlarmCode $AlarmCode -TimeoutSec $TimeoutSec
-    if (-not $resultCell) { throw "조회 결과 대기 시간 초과(${TimeoutSec}초) 또는 알람코드 불일치." }
-
-    return Get-RowContainer -Element $resultCell -Levels $RowContainerAncestorLevels
+    return $alarmNameEl
 }
 
 # ===================================================================
-# 9. 한 행 처리 (조회 → 알람명 수정 → 저장 → 저장 후 재조회 검증)
+# 8. Update Error Code 화면에서 값 입력 + 생성 + 검증 + 저장
+# ===================================================================
+
+function Set-AlarmNameAndSave {
+    param(
+        [System.Windows.Automation.AutomationElement]$MainWindow,
+        [System.Windows.Automation.AutomationElement]$AlarmNameEl,
+        [string]$NewAlarmName
+    )
+
+    # 에러명 입력
+    Set-UiaValue -Element $AlarmNameEl -Value $NewAlarmName
+
+    # 상태 입력란에도 동일한 값 입력 (실사용 환경에서 확인된 사양)
+    $cond = New-ConditionFromConfig $Config.StatusBox
+    $statusEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $statusEl) { throw "상태 입력창(NStatus)을 찾지 못했습니다." }
+    Set-UiaValue -Element $statusEl -Value $NewAlarmName
+
+    # 생성 버튼 클릭
+    $cond = New-ConditionFromConfig $Config.GenerateButton
+    $genEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $genEl) { throw "생성 버튼을 찾지 못했습니다." }
+    Invoke-UiaClick -Element $genEl
+
+    # 저장 전 확인: 생성된 텍스트에 새 알람명이 포함되는지 확인
+    $found = Wait-ForTextContaining -Parent $MainWindow -Substring $NewAlarmName -TimeoutSec $GenerateVerifyTimeoutSec
+    if (-not $found) {
+        throw "'생성' 후 확인 텍스트에서 '$NewAlarmName' 을 찾지 못했습니다. 저장하지 않고 실패 처리합니다."
+    }
+
+    # 저장 버튼 클릭
+    $cond = New-ConditionFromConfig $Config.SaveButton
+    $saveEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $saveEl) { throw "저장 버튼을 찾지 못했습니다." }
+    Invoke-UiaClick -Element $saveEl
+
+    # 저장 결과를 알려주는 별도 요소가 없어(재조회로 검증) 최소한의 처리 대기만 둠
+    Start-Sleep -Milliseconds 1000
+}
+
+# Error List 클릭 -> Search Error Code 화면으로 복귀 (다음 조회를 위한 상태 복원)
+function Return-ToSearchScreen {
+    param([System.Windows.Automation.AutomationElement]$MainWindow)
+
+    $cond = New-ConditionFromConfig $Config.ErrorListLink
+    $el = Find-ElementNow -Parent $MainWindow -Condition $cond
+    if (-not $el) { throw "Error List 링크를 찾지 못했습니다." }
+    Invoke-UiaClick -Element $el
+
+    $cond = New-ConditionFromConfig $Config.EquipmentNameBox
+    $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "Search Error Code 화면으로 돌아오지 못했습니다." }
+}
+
+# ===================================================================
+# 9. 한 행 처리: 수정 -> 복귀 -> 재검증(재조회) -> 복귀
 # ===================================================================
 
 function Process-Row {
     param(
-        [System.Windows.Automation.AutomationElement]$Window,
+        [System.Windows.Automation.AutomationElement]$MainWindow,
         [pscustomobject]$Row,
         [int]$Index,
         [int]$Total
     )
 
     Write-Log ("{0}/{1} 처리 중: {2}, {3}" -f $Index, $Total, $Row.장비명, $Row.알람코드)
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
     $result = [pscustomobject]@{
-        장비명   = $Row.장비명
-        알람코드 = $Row.알람코드
-        처리결과 = "실패"
-        실패사유 = ""
+        장비명     = $Row.장비명
+        알람코드   = $Row.알람코드
+        새_알람명 = $Row.새_알람명
+        검증완료   = "N"
+        소요시간초 = 0
+        처리결과   = "실패"
+        실패사유   = ""
     }
 
     try {
-        # 1~4) 장비명/알람코드 입력 → 조회 → 결과 로드 대기 → 행 컨테이너 확보
-        $rowContainer = Invoke-EmsSearchAndGetRow -Window $Window -EquipmentName $Row.장비명 -AlarmCode $Row.알람코드
+        # 1) 수정 단계
+        $alarmNameEl = Invoke-SearchAndOpenUpdateScreen -MainWindow $MainWindow -EquipmentName $Row.장비명 -AlarmCode $Row.알람코드
+        Set-AlarmNameAndSave -MainWindow $MainWindow -AlarmNameEl $alarmNameEl -NewAlarmName $Row.새_알람명
+        Return-ToSearchScreen -MainWindow $MainWindow
 
-        # 5-1) 수정 아이콘(gif) 클릭 - 이 EMS 화면은 알람명을 바로 못 고치고, 먼저
-        #      행 안의 수정 아이콘을 눌러야 입력창이 편집 가능한 상태가 됨.
-        #      이 아이콘은 Name/AutomationId가 없어 ControlType(Image)만으로 찾음.
-        #      이미지 자체는 InvokePattern/LegacyIAccessiblePattern을 둘 다 지원하지
-        #      않는 것으로 확인됨(클릭 이벤트가 이미지가 아니라 그걸 감싸는 부모에
-        #      걸려있음). 그래서 이미지를 찾은 뒤, 위로 올라가면서 InvokePattern을
-        #      지원하는 가장 가까운 부모(틀)를 찾아 그걸 클릭한다.
-        $cond = New-ConditionFromConfig $Config.AlarmNameEditButton
-        $editIconEl = Find-ElementNow -Parent $rowContainer -Condition $cond
-        if (-not $editIconEl) { throw "행 내에서 알람명 수정 아이콘(이미지)을 찾지 못했습니다." }
-        $editButtonEl = Find-ClickableAncestor -Element $editIconEl -MaxLevels 5
-        if (-not $editButtonEl) { throw "수정 아이콘을 감싸는, 클릭 가능한(InvokePattern 지원) 부모 요소를 찾지 못했습니다." }
-        Invoke-UiaClick -Element $editButtonEl
+        # 2) 재검증 단계: 처음부터 다시 조회해서 실제 반영된 값을 확인
+        $verifyEl = Invoke-SearchAndOpenUpdateScreen -MainWindow $MainWindow -EquipmentName $Row.장비명 -AlarmCode $Row.알람코드
+        $displayedName = Get-ElementDisplayValue -Element $verifyEl
+        Return-ToSearchScreen -MainWindow $MainWindow
 
-        # 5-2) 알람명 입력창이 편집 가능한 상태로 나타날 때까지 대기 (해당 행 범위 안에서만 검색)
-        $cond = New-ConditionFromConfig $Config.AlarmNameBox
-        $alarmNameEl = Wait-UIAElement -Parent $rowContainer -Condition $cond -TimeoutSec $TimeoutSec
-        if (-not $alarmNameEl) { throw "수정 아이콘 클릭 후 알람명 입력창을 찾지 못했습니다. RowContainerAncestorLevels 값을 조정해보세요." }
-        Set-UiaValue -Element $alarmNameEl -Value $Row.새_알람명
-
-        # 6) 저장 전 최종 확인: 화면에 조회된 알람코드가 지금 처리 중인 행과 일치하는지 재확인
-        $cond = New-ConditionFromConfig $Config.ResultAlarmCodeDisplay
-        $codeEl = Find-ElementNow -Parent $rowContainer -Condition $cond
-        $currentAlarmCode = if ($codeEl) { Get-ElementDisplayValue -Element $codeEl } else { $null }
-        if ($currentAlarmCode -ne $Row.알람코드) {
-            throw "저장 전 확인 실패: 화면 알람코드='$currentAlarmCode', 기대값='$($Row.알람코드)'. 저장하지 않고 실패 처리합니다."
-        }
-
-        # 7) 저장 버튼 클릭 (행 범위 안에서만 검색 - 중복 이름 대응)
-        $cond = New-ConditionFromConfig $Config.SaveButton
-        $saveEl = Find-ElementNow -Parent $rowContainer -Condition $cond
-        if (-not $saveEl) { throw "행 내에서 저장 버튼을 찾지 못했습니다." }
-        Invoke-UiaClick -Element $saveEl
-
-        # 8) 저장 성공 메시지 폴링 확인 (타임아웃: $SaveConfirmTimeoutSec)
-        $cond = New-ConditionFromConfig $Config.SaveSuccessIndicator
-        $successEl = Wait-UIAElement -Parent $Window -Condition $cond -TimeoutSec $SaveConfirmTimeoutSec
-        if (-not $successEl) {
-            throw "저장 성공 메시지를 ${SaveConfirmTimeoutSec}초 내에 확인하지 못했습니다."
-        }
-
-        # 9) 저장 후 재조회 검증 (가장 중요): 성공 메시지만 믿지 않고, 같은 조건으로 다시 조회해서
-        #    화면에 실제로 표시되는 알람명이 CSV의 새_알람명과 일치하는지 확인해야 최종 성공.
-        $verifyRowContainer = Invoke-EmsSearchAndGetRow -Window $Window -EquipmentName $Row.장비명 -AlarmCode $Row.알람코드
-
-        $cond = New-ConditionFromConfig $Config.AlarmNameBox
-        $verifyNameEl = Find-ElementNow -Parent $verifyRowContainer -Condition $cond
-        if (-not $verifyNameEl) { throw "저장 후 재조회 결과에서 알람명 요소를 찾지 못했습니다." }
-
-        $displayedName = Get-ElementDisplayValue -Element $verifyNameEl
         if ($displayedName -ne $Row.새_알람명) {
-            throw "저장 후 검증 실패: 화면 알람명='$displayedName', 기대값='$($Row.새_알람명)'. (성공 메시지는 떴으나 실제 반영은 안 됐을 수 있음)"
+            throw "저장 후 재검증 실패: 화면 값='$displayedName', 기대값='$($Row.새_알람명)'"
         }
 
+        $result.검증완료 = "Y"
         $result.처리결과 = "성공"
-        Write-Log "성공: 장비명='$($Row.장비명)' 알람코드='$($Row.알람코드)' → 새_알람명='$($Row.새_알람명)' (재조회 검증 통과)"
+        Write-Log "성공: 장비명='$($Row.장비명)' 알람코드='$($Row.알람코드)' -> '$($Row.새_알람명)' (재검증 통과)"
     }
     catch {
         $result.처리결과 = "실패"
         $result.실패사유 = $_.Exception.Message
         Write-Log "실패: 장비명='$($Row.장비명)' 알람코드='$($Row.알람코드)' 사유='$($_.Exception.Message)'"
+
+        # 다음 행이 정상적으로 시작할 수 있도록, 실패했더라도 Search Error Code
+        # 화면으로 복귀를 한 번 시도(이미 복귀돼 있으면 조용히 무시됨)
+        try { Return-ToSearchScreen -MainWindow $MainWindow } catch { }
+    }
+    finally {
+        $stopwatch.Stop()
+        $result.소요시간초 = [math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
     }
 
     return $result
 }
 
 # ===================================================================
-# 10. 메인 실행부
+# 10. 실시간 결과 창 (GUI) - 일시정지 버튼 없이, 진행 상황만 실시간으로 표시
+# ===================================================================
+
+function New-ResultsWindow {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "EMS 알람 자동화 - 실시간 처리 현황"
+    $form.Width = 950
+    $form.Height = 500
+    $form.StartPosition = "CenterScreen"
+
+    $grid = New-Object System.Windows.Forms.DataGridView
+    $grid.Dock = "Fill"
+    $grid.ReadOnly = $true
+    $grid.AllowUserToAddRows = $false
+    $grid.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::Fill
+
+    [void]$grid.Columns.Add("장비명", "장비명")
+    [void]$grid.Columns.Add("알람코드", "알람코드")
+    [void]$grid.Columns.Add("새알람명", "새_알람명")
+    [void]$grid.Columns.Add("검증완료", "검증완료")
+    [void]$grid.Columns.Add("소요시간", "소요시간(초)")
+    [void]$grid.Columns.Add("처리결과", "처리결과")
+    [void]$grid.Columns.Add("실패사유", "실패사유")
+
+    $form.Controls.Add($grid)
+    $form.Tag = $grid
+    return $form
+}
+
+function Add-ResultToWindow {
+    param(
+        [System.Windows.Forms.Form]$ResultsForm,
+        [pscustomobject]$Row
+    )
+    $grid = $ResultsForm.Tag
+    $rowIndex = $grid.Rows.Add()
+    $r = $grid.Rows[$rowIndex]
+    $r.Cells["장비명"].Value   = $Row.장비명
+    $r.Cells["알람코드"].Value = $Row.알람코드
+    $r.Cells["새알람명"].Value = $Row.새_알람명
+    $r.Cells["검증완료"].Value = $Row.검증완료
+    $r.Cells["소요시간"].Value = $Row.소요시간초
+    $r.Cells["처리결과"].Value = $Row.처리결과
+    $r.Cells["실패사유"].Value = $Row.실패사유
+    $grid.FirstDisplayedScrollingRowIndex = $rowIndex
+}
+
+# ===================================================================
+# 11. 메인 실행부
 # ===================================================================
 
 Write-Log "===== EMS 알람 자동화 시작 ====="
 
-# 이전 실행의 STOP.txt 잔재 정리
 if (Test-Path -LiteralPath $StopFlagPath) {
     Remove-Item -LiteralPath $StopFlagPath -Force
     Write-Log "이전 실행에서 남은 STOP.txt 를 삭제했습니다."
@@ -523,8 +603,16 @@ if ($TestMode) {
 
 Write-Log "대상 EMS 창을 찾는 중 (제목에 '$EmsWindowTitleContains' 포함)..."
 $window = Find-EmsWindow -TitleContains $EmsWindowTitleContains
-$targetPid = $window.Current.ProcessId
-Write-Log "대상 창 확보. PID=$targetPid, 제목='$($window.Current.Name)'"
+Write-Log "대상 창 확보. PID=$($window.Current.ProcessId), 제목='$($window.Current.Name)'"
+
+# 결과 파일은 이번 실행 기준으로 새로 시작 (행마다 즉시 추가 저장됨)
+if (Test-Path -LiteralPath $ResultCsvPath) {
+    Remove-Item -LiteralPath $ResultCsvPath -Force
+}
+
+$resultsForm = New-ResultsWindow
+$resultsForm.Show()
+[System.Windows.Forms.Application]::DoEvents()
 
 $results = New-Object System.Collections.Generic.List[pscustomobject]
 $total = $rows.Count
@@ -538,12 +626,22 @@ foreach ($row in $rows) {
         break
     }
 
-    $r = Process-Row -Window $window -Row $row -Index $index -Total $total
+    $r = Process-Row -MainWindow $window -Row $row -Index $index -Total $total
     $results.Add($r)
-}
 
-$results | Export-Csv -Path $ResultCsvPath -NoTypeInformation -Encoding UTF8
+    # 파일에 즉시 추가 저장
+    $r | Export-Csv -Path $ResultCsvPath -NoTypeInformation -Encoding UTF8 -Append
+
+    # 실시간 결과 창에도 즉시 반영
+    Add-ResultToWindow -ResultsForm $resultsForm -Row $r
+    [System.Windows.Forms.Application]::DoEvents()
+}
 
 $successCount = ($results | Where-Object { $_.처리결과 -eq "성공" }).Count
 $failCount = ($results | Where-Object { $_.처리결과 -eq "실패" }).Count
 Write-Log "===== 종료. 성공 $successCount 건 / 실패 $failCount 건. 결과: $ResultCsvPath ====="
+
+$resultsForm.Text = "$($resultsForm.Text) - 완료 (성공 $successCount / 실패 $failCount)"
+
+# 결과 창은 사용자가 직접 닫을 때까지 화면에 유지
+[System.Windows.Forms.Application]::Run($resultsForm)

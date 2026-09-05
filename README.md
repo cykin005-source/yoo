@@ -70,32 +70,32 @@ EMS 화면의 입력창/버튼 Name·AutomationId를 아직 모른다면, EMS �
 Name/AutomationId가 비어있는 요소도 부모 쪽에 식별 정보가 있는지 바로 확인할
 수 있습니다. `q` 입력 후 Enter로 종료합니다.
 
-## 2단계 — `$Config` 채우기 (`Update-EmsAlarms.ps1` 상단)
+## 2단계 — `$Config` (이미 실제 값으로 채워져 있음)
 
-전부 `TODO`로 되어 있는 아래 항목을 실제 값으로 채워야 합니다.
+실제 화면에서 확인한 값으로 `Update-EmsAlarms.ps1`의 `$Config`가 이미 채워져
+있습니다. 화면이 바뀌면 아래 항목만 수정하면 됩니다.
 
-- `$EmsWindowTitleContains`: EMS가 열린 Edge 창의 제목에 포함된 문자열
-- `EquipmentNameBox`, `AlarmCodeBox`, `SearchButton`, `AlarmNameBox`, `SaveButton`: 각 컨트롤의 AutomationId/Name/ControlType
-- `AlarmNameEditButton`: 알람명을 고치기 전에 눌러야 하는 수정 아이콘(gif 이미지). 이 아이콘은 Name/AutomationId/ClassName이 전부 비어있는 것으로 확인되어, ControlType(`Image`)만으로 그 행 안에서 찾도록 되어 있습니다(행 안에 이미지가 이거 하나뿐이라는 전제). 이름/아이디로는 못 찾으니 이 항목은 값을 채울 필요 없이 그대로 두면 됩니다. (실제 클릭은 이미지 자체가 아니라, 이미지의 부모 중 InvokePattern을 지원하는 첫 번째 요소에 대해 자동으로 수행됩니다 - 이미지 자체는 클릭 이벤트가 없고 그걸 감싸는 부모 쪽에 클릭 동작이 걸려있는 것으로 확인됨)
-- `ResultAlarmCodeDisplay`: 조회 결과 표에서 알람코드가 표시되는 요소(결과 로드 판단 + 행 구분 + 저장 전 확인에 사용)
-- `SaveSuccessIndicator`: 저장 후 나타나는 "저장되었습니다" 류의 성공 메시지 요소 (필수 — 이게 안 뜨면 실패로 기록됨)
-- `$RowContainerAncestorLevels`: 결과 알람코드 요소에서 몇 단계 위로 올라가야 "그 행 전체"(알람명 입력창 + 저장 버튼 포함)가 나오는지. 테스트하면서 맞는 값을 찾으면 됩니다.
+- `$EmsWindowTitleContains` = `"Search Error Code"`, `$PopupWindowTitleContains` = `"Search and Select List of Values"`
+- `EquipmentNameBox`(SEmNo), `AlarmCodeBox`(SPlcErrCode): 장비명/에러코드 입력창
+- `LookupLink`: "찾아보기" 링크 (Hyperlink, Name="Search: 설비 에러 코드") — 클릭하면 값 선택 팝업이 뜸
+- `PopupRadioItem`(RadioButton, Name="Select"), `PopupConfirmButton`(Button, Name="Select"): 팝업에서 후보 선택 + 확정. 팝업에는 항상 첫 번째 라디오만 선택하도록 되어 있습니다(정확한 코드로 검색했기 때문에 첫 번째가 항상 정답)
+- `SearchButton`(Find): 실제 조회 버튼
+- `EditIconLink`(SearchAlarmCdTable:Update:0): 연필 모양 아이콘 — 클릭하면 같은 창 안에서 "Update Error Code" 화면으로 전환됨
+- `AlarmNameBox`(cPlcErrDesc), `StatusBox`(NStatus): 둘 다 새_알람명과 같은 값이 입력됨
+- `GenerateButton`(NGenerate), `SaveButton`(SaveButton), `ErrorListLink`(XXEMSSTD052)
 
 ## 실행 전 준비물
 
-1. Microsoft Edge에서 EMS 페이지를 미리 열어둘 것 (최소화하지 말 것 — 최소화 상태에서는 렌더링이 늦어질 수 있음. 다른 창 뒤에 두는 건 괜찮음)
+1. Microsoft Edge에서 EMS의 "Search Error Code" 화면을 미리 열어둘 것 (최소화하지 말 것)
 2. `data.csv`를 스크립트와 같은 폴더에 준비 (컬럼: `장비명,알람코드,새_알람명`)
-3. 위 "2단계"의 `$Config` 값을 실제 화면에 맞게 채워넣기
 
 ## 실행 방법
 
 **반드시 Windows PowerShell 5.1(`powershell.exe`)로 실행하세요.**
-PowerShell 7(`pwsh.exe`)은 UI Automation 관련 어셈블리가 기본 제공되지
-않아 동작이 불안정할 수 있습니다.
 
 ```powershell
 cd <스크립트가 있는 폴더>
-# 최초 1회, 실행 정책 때문에 막히는 경우에만 (관리자 권한 불필요, 현재 세션에만 적용)
+# 최초 1회, 실행 정책 때문에 막히는 경우에만
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 # 먼저 1~2건만 테스트
@@ -105,40 +105,39 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\Update-EmsAlarms.ps1
 ```
 
-실행 중에는 각 행을 처리할 때마다 콘솔에 `N/전체건수 처리 중: 장비명, 알람코드`
-형태로 진행 상황이 출력됩니다.
+실행하면 콘솔 로그와 함께, **실시간으로 갱신되는 결과 창(표)** 이 하나 뜹니다.
+행을 처리할 때마다 이 창에 바로 한 줄씩 추가됩니다.
 
 ## 처리 흐름 (한 행당)
 
-1. 장비명 입력 → 알람코드 입력 → 조회
-2. 결과 로드 대기 → 해당 행의 수정 아이콘(gif) 클릭 → 알람명 입력창이 편집 가능해질 때까지 대기 → 새_알람명 입력
-3. 저장 전, 화면에 조회된 알람코드가 이 행의 알람코드와 일치하는지 재확인
-4. 저장 버튼 클릭 → "저장되었습니다" 류의 성공 메시지가 뜨는지 확인(5초 대기)
-5. **같은 장비명+알람코드로 다시 조회 → 화면에 표시된 알람명이 새_알람명과
-   실제로 일치하는지 확인.** 성공 메시지만으로는 성공 처리하지 않습니다
-   (화면은 성공했다고 뜨는데 실제 저장은 안 되는 경우를 걸러내기 위함).
-6. 4~5를 모두 통과해야 최종 "성공"으로 기록
+1. 장비명 + 알람코드 입력 → "찾아보기" 클릭 → 값 선택 팝업에서 첫 번째 후보 선택 → 확정
+2. "조회" 클릭 → 연필 아이콘 클릭 → "Update Error Code" 화면으로 전환
+3. 에러명(cPlcErrDesc) + 상태(NStatus)에 새_알람명 입력 → "생성" 클릭
+4. 생성된 텍스트에 새_알람명이 포함되는지 확인(저장 전 확인) → "저장" 클릭
+5. "Error List"로 복귀 → **1~2번을 처음부터 다시 반복해서 재조회** →
+   화면에 표시된 에러명이 새_알람명과 실제로 일치하는지 최종 확인
+6. 일치해야 최종 "성공"으로 기록, 그 자리에서 다시 "Error List"로 복귀 후 다음 행 진행
 
 ## 실행 중 안전 정지
 
 스크립트와 같은 폴더에 `STOP.txt`라는 빈 텍스트 파일을 만들면, 처리 중이던
-행을 끝낸 뒤(중간에 끊지 않음) 다음 행 시작 전에 결과를 저장하고 정상
-종료합니다. 탐색기에서 빈 텍스트 파일을 만들어 이름만 `STOP.txt`로
-바꾸면 됩니다.
+행을 끝낸 뒤(중간에 끊지 않음) 다음 행 시작 전에 멈춥니다. (클릭식 일시정지
+버튼은 없음 — 파일 방식만 사용)
 
 ## 결과 확인
 
-- `result.csv`: 행별 처리결과(`성공`/`실패`)와 실패사유
+- `result.csv`: 행마다 즉시 추가 저장(장비명/알람코드/새_알람명/검증완료/소요시간초/처리결과/실패사유)
+- 화면의 실시간 결과 창: 같은 내용을 표 형태로 실시간 표시 (처리 완료 후에도 창은 닫힐 때까지 유지됨)
 - `run.log`: 실행 로그(타임스탬프 + 진행 상황 포함)
 
 ## 알아두면 좋은 주의사항
 
 - 대상 PC에서 `Add-Type -AssemblyName UIAutomationClient` / `UIAutomationTypes`
   실행이 확인됐고, 실행 정책/Constrained Language Mode 차단도 없는 것으로
-  확인됐습니다(단, Windows PowerShell 5.1 기준). PowerShell 7에서는 위
-  어셈블리 로드가 실패할 수 있으니 문제가 생기면 5.1로 실행해보세요.
-- EMS 화면이 React/Vue 등으로 만들어진 경우, 값을 넣어도 화면엔 보이지만
-  내부 상태가 갱신되지 않는 경우가 드물게 있습니다. 이런 경우를 대비해
-  입력 직후 값 재확인 + 저장 전 재확인 + **저장 후 재조회 검증**까지
-  3중으로 확인하도록 만들어져 있습니다. 그래도 처음 몇 건은 실제 EMS
-  화면에서 결과가 맞게 저장됐는지 눈으로 꼭 확인하세요.
+  확인됐습니다(단, Windows PowerShell 5.1 기준).
+- 이 PC에서는 `LegacyIAccessiblePattern` 타입 자체가 없거나 못 찾는 것으로
+  확인되어, 관련 코드는 리플렉션으로 안전하게 우회하도록 되어 있습니다
+  (없으면 조용히 "미지원"으로 처리하고 계속 진행).
+- "Search Error Code" ↔ "Update Error Code"는 같은 창(같은 PID) 안에서
+  내용만 바뀌는 것으로 확인되어 창을 한 번만 고정해서 계속 씁니다. 값 선택
+  팝업("Search and Select List of Values")만 별도의 새 창으로 처리합니다.
