@@ -8,11 +8,13 @@
 ## 파일 구성
 
 - `Update-EmsAlarms.ps1`: 실제 자동화를 수행하는 메인 스크립트
-- `Get-EmsUiaTree.ps1`: 화면 요소의 Name/AutomationId를 뽑아주는 도구
-  (Accessibility Insights, UIATreeInspector 등 별도 설치 프로그램을 쓸 수
-  없는 환경을 위한 대체 도구 — 이것도 Windows 기본 PowerShell만으로 동작)
+- `Get-EmsUiaTree.ps1`: 창 하나를 통째로 골라 그 안의 모든 요소(Name,
+  AutomationId, ClassName, 화면 위치, 지원 패턴 등)를 트리 구조 그대로
+  텍스트 파일로 뽑아주는 진단 도구 (Accessibility Insights, UIATreeInspector
+  등 별도 설치 프로그램을 쓸 수 없는 환경을 위한 대체 도구 — Windows 기본
+  PowerShell만으로 동작)
 - `data.csv`: 처리할 데이터 샘플 템플릿
-- `.gitignore`: 실행 중 생기는 STOP.txt/result.csv/run.log 등 제외
+- `.gitignore`: 실행 중 생기는 STOP.txt/result.csv/run.log/uia_tree_*.txt 등 제외
 
 ## 1단계 — 화면 요소 정보 뽑기 (아직 안 했다면 먼저 이걸부터)
 
@@ -20,16 +22,34 @@ EMS 화면의 입력창/버튼 Name·AutomationId를 아직 모른다면, EMS �
 상태에서 `Get-EmsUiaTree.ps1`을 먼저 실행하세요.
 
 ```powershell
-# 1) 창 제목을 모르면 일단 그냥 실행 → 열려있는 창 목록이 출력됨
 .\Get-EmsUiaTree.ps1
-
-# 2) 목록에서 확인한 EMS 창 제목의 일부를 넣어 다시 실행
-.\Get-EmsUiaTree.ps1 -TitleContains "EMS"
 ```
 
-실행하면 같은 폴더에 `ems_uia_tree.txt`가 생성됩니다. 이 안에서 각 입력창
-/버튼에 해당하는 줄을 찾아 `[ControlType] Name='...' AutomationId='...'`
-값을 `Update-EmsAlarms.ps1`의 `$Config`에 옮겨 적으면 됩니다.
+실행하면 현재 열려있는 모든 창의 목록이 `[번호] 프로세스=... PID=... 제목='...'`
+형태로 출력됩니다. 그중 EMS가 열려있는 Edge 창의 **번호를 입력**하면(제목이나
+프로세스명만으로 자동 판단하지 않고 직접 눈으로 확인하고 고르는 방식),
+그 창 안의 모든 요소가 같은 폴더에 `uia_tree_YYYYMMDD_HHMMSS.txt` 파일로
+저장됩니다. Name/AutomationId가 비어있는 이미지 버튼 같은 요소도 빠짐없이
+포함됩니다.
+
+파일은 `|`(파이프)로 열이 구분되어 있어 메모장에서 Ctrl+F로 찾아봐도 되고,
+엑셀에서 "텍스트 나누기(구분 기호: |)"로 열어도 됩니다. 첫 줄이 열 이름
+(`Depth|ControlType|Name|AutomationId|ClassName|HelpText|IsEnabled|BoundingRect|InvokePattern|ValuePattern`)
+입니다. 이 안에서 원하는 입력창/버튼 줄을 찾아 Name/AutomationId 값을
+`Update-EmsAlarms.ps1`의 `$Config`에 옮겨 적으면 됩니다.
+
+화면이 복잡해서 결과가 너무 많으면 아래 옵션을 참고하세요.
+
+```powershell
+# 클릭하거나 입력 가능한 요소만 보기
+.\Get-EmsUiaTree.ps1 -OnlyInteractable
+
+# Name이나 ClassName에 특정 문자열이 들어간 요소만 보기
+.\Get-EmsUiaTree.ps1 -Filter "알람"
+
+# 너무 깊이 들어가지 않고 얕게만 훑어보기
+.\Get-EmsUiaTree.ps1 -MaxDepth 8
+```
 
 ## 2단계 — `$Config` 채우기 (`Update-EmsAlarms.ps1` 상단)
 
