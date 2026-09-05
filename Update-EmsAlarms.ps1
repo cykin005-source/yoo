@@ -277,10 +277,14 @@ function Wait-ForNearestLookupLink {
     $refRect = $ReferenceElement.Current.BoundingRectangle
     $refX = $refRect.X + ($refRect.Width / 2)
     $refY = $refRect.Y + ($refRect.Height / 2)
+    Write-Log "[Wait-ForNearestLookupLink] 기준(알람코드 입력창) 위치=$($refRect.X),$($refRect.Y),$($refRect.Width),$($refRect.Height)"
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $iteration = 0
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+        $iteration++
         $candidates = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition))
+        Write-Log "[Wait-ForNearestLookupLink] 시도 $iteration - ControlType=$ControlTypeName 후보 개수=$($candidates.Count)"
 
         if ($candidates.Count -gt 0) {
             $best = $null
@@ -297,7 +301,11 @@ function Wait-ForNearestLookupLink {
                     }
                 } catch { }
             }
-            if ($best) { return $best }
+            if ($best) {
+                Write-Log "[Wait-ForNearestLookupLink] 최적 후보 발견, 거리=$([math]::Round($bestDist,1))"
+                return $best
+            }
+            Write-Log "[Wait-ForNearestLookupLink] 후보는 있었으나 전부 BoundingRectangle 계산 실패"
         }
         Start-Sleep -Milliseconds $PollingIntervalMs
     }
