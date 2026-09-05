@@ -263,6 +263,25 @@ function Find-NearestElementByCondition {
     return $best
 }
 
+# Find-NearestElementByCondition 은 한 번만 확인하고 끝나서, 화면이 자동입력
+# 처리로 잠깐 갱신되는 순간과 겹치면 놓칠 수 있음. 찾을 때까지(또는 타임아웃)
+# 폴링으로 재시도하는 버전.
+function Wait-ForNearestElementByCondition {
+    param(
+        [System.Windows.Automation.AutomationElement]$Parent,
+        [System.Windows.Automation.Condition]$Condition,
+        [System.Windows.Automation.AutomationElement]$ReferenceElement,
+        [int]$TimeoutSec = 10
+    )
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+        $result = Find-NearestElementByCondition -Parent $Parent -Condition $Condition -ReferenceElement $ReferenceElement
+        if ($result) { return $result }
+        Start-Sleep -Milliseconds $PollingIntervalMs
+    }
+    return $null
+}
+
 function Wait-UIAElement {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
@@ -408,7 +427,7 @@ function Invoke-SearchAndOpenUpdateScreen {
     #    같은 이름의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있는 것으로
     #    확인되어, 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
     $cond = New-ConditionFromConfig $Config.LookupLink
-    $el = Find-NearestElementByCondition -Parent $MainWindow -Condition $cond -ReferenceElement $alarmCodeEl
+    $el = Wait-ForNearestElementByCondition -Parent $MainWindow -Condition $cond -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "찾아보기 링크(Search: 설비 에러 코드)를 찾지 못했습니다." }
     Invoke-UiaClick -Element $el
 
