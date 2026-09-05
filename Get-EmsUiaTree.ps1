@@ -13,7 +13,8 @@
     ------
     1) EMS 페이지를 Edge에서 열어둔 상태로 실행:
          .\Get-EmsUiaTree.ps1
-       → 현재 열려있는 모든 최상위 창 목록(번호/프로세스명/제목/PID)이 출력됩니다.
+       → 현재 열려있는 엣지(msedge.exe) 창 목록(번호/프로세스명/제목/PID)만 출력됩니다.
+         (다른 프로그램 창은 이 자동화와 무관하므로 목록에 나오지 않습니다)
        → 그 중 EMS가 열린 Edge 창의 번호를 입력하세요.
 
     2) 결과는 스크립트와 같은 폴더에 uia_tree_YYYYMMDD_HHMMSS.txt 로 저장됩니다.
@@ -56,14 +57,25 @@ $OutPath = Join-Path $ScriptDir "uia_tree_$timestamp.txt"
 #    (제목/프로세스명만으로 자동 판단하지 않음 - 엣지 창이 여러 개일 수 있으므로)
 # ===================================================================
 
+$edgeProcessIds = @(Get-Process -Name "msedge" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+if ($edgeProcessIds.Count -eq 0) {
+    Write-Host "실행 중인 Microsoft Edge(msedge.exe) 프로세스를 찾지 못했습니다. Edge를 먼저 열어주세요."
+    return
+}
+
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $windowCondition = New-Object System.Windows.Automation.PropertyCondition(
     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
     [System.Windows.Automation.ControlType]::Window)
-$topLevelWindows = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition))
+$allTopLevelWindows = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition))
+
+# 엣지(msedge.exe) 창만 남김 - 다른 프로그램은 이 자동화와 무관하므로 목록에서 제외
+$topLevelWindows = @($allTopLevelWindows | Where-Object {
+    try { $_.Current.ProcessId -in $edgeProcessIds } catch { $false }
+})
 
 if ($topLevelWindows.Count -eq 0) {
-    Write-Host "열려있는 창이 없습니다."
+    Write-Host "Edge 프로세스는 실행 중이지만 UIA로 보이는 엣지 창이 없습니다. 창이 최소화되어 있지 않은지 확인해주세요."
     return
 }
 
@@ -88,7 +100,7 @@ for ($i = 0; $i -lt $topLevelWindows.Count; $i++) {
     }
 }
 
-Write-Host "현재 열려있는 창 목록:"
+Write-Host "현재 열려있는 엣지 창 목록:"
 foreach ($item in $windowList) {
     Write-Host ("  [{0}] 프로세스={1,-12} PID={2,-8} 제목='{3}'" -f $item.Index, $item.ProcessName, $item.Pid_, $item.Title)
 }
