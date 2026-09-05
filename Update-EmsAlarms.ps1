@@ -52,8 +52,10 @@ $Config = @{
     # 채워졌는지 확인한 뒤에 찾아보기를 눌러야 타이밍 충돌이 없음(고정 딜레이 대신
     # 이 값이 채워질 때까지 폴링).
     AutoFilledErrDescBox = @{ AutomationId = "SPlcErrDesc";                  Name = "TODO";                     ControlType = "Edit" }
-    # "찾아보기" 링크. 정확한 전체 이름으로 되돌림(포함 여부로 찾는 방식은 유지 -
-    # 아래 Wait-ForNearestLookupLink 에서 -like로 검사하므로 전체 문구를 넣어도 안전).
+    # "찾아보기" 링크. SPlcErrDesc 값이 채워지면 이 링크의 Name 자체가 바뀌는
+    # 것으로 보여, Name은 더 이상 매칭에 안 쓰고 참고용으로만 남겨둠. 실제로는
+    # ControlType(Hyperlink)만으로 후보를 모은 뒤 알람코드 입력창과 위치가
+    # 가장 가까운 것을 찾음(Wait-ForNearestLookupLink 참고).
     LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
     PopupRadioItem     = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "RadioButton" }
     PopupConfirmButton = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "Button" }
@@ -257,14 +259,15 @@ function Find-ElementNow {
     return $Parent.FindFirst($Scope, $Condition)
 }
 
-# "찾아보기" 링크 전용: 정확한 이름 일치가 아니라 키워드 포함 여부로 찾고,
-# 여러 개 중 기준 요소(알람코드 입력창)와 세로 위치가 가장 가까운 것을 고른다.
+# "찾아보기" 링크 전용: Name 텍스트에 의존하지 않는다(값이 채워지면 그 안의
+# 내용을 반영해 이름 자체가 바뀌는 것으로 보여, 이름 일치/포함 방식 둘 다
+# 불안정했음). 대신 ControlType(Hyperlink)만으로 후보를 모은 뒤, 기준 요소
+# (알람코드 입력창)와 화면상 위치(X,Y 모두)가 가장 가까운 것을 고른다.
 # 화면 갱신 타이밍에 걸리는 경우를 대비해 타임아웃까지 폴링 재시도한다.
 function Wait-ForNearestLookupLink {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
         [string]$ControlTypeName,
-        [string]$NameContains,
         [System.Windows.Automation.AutomationElement]$ReferenceElement,
         [int]$TimeoutSec = 10
     )
@@ -272,13 +275,12 @@ function Wait-ForNearestLookupLink {
     $ctCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)
     $refRect = $ReferenceElement.Current.BoundingRectangle
+    $refX = $refRect.X + ($refRect.Width / 2)
     $refY = $refRect.Y + ($refRect.Height / 2)
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        $candidates = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition) | Where-Object {
-            try { $_.Current.Name -like "*$NameContains*" } catch { $false }
-        })
+        $candidates = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition))
 
         if ($candidates.Count -gt 0) {
             $best = $null
@@ -286,8 +288,9 @@ function Wait-ForNearestLookupLink {
             foreach ($c in $candidates) {
                 try {
                     $r = $c.Current.BoundingRectangle
+                    $cx = $r.X + ($r.Width / 2)
                     $cy = $r.Y + ($r.Height / 2)
-                    $dist = [math]::Abs($cy - $refY)
+                    $dist = [math]::Sqrt([math]::Pow($cx - $refX, 2) + [math]::Pow($cy - $refY, 2))
                     if ($dist -lt $bestDist) {
                         $bestDist = $dist
                         $best = $c
@@ -486,8 +489,8 @@ function Invoke-SearchAndOpenUpdateScreen {
     #    정확한 문구도 입력 시점에 따라 조금 달라질 수 있어 "포함" 여부로 찾고,
     #    그 중 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
     $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
-        -NameContains $Config.LookupLink.Name -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
-    if (-not $el) { throw "찾아보기 링크('$($Config.LookupLink.Name)' 포함)를 찾지 못했습니다." }
+        -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "알람코드 입력창 근처에서 찾아보기 링크(Hyperlink)를 찾지 못했습니다." }
     Write-ElementDebugInfo -Element $el -Label "찾아보기 링크(클릭 대상)"
     Invoke-UiaClick -Element $el
 
