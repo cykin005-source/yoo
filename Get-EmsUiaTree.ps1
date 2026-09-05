@@ -1,4 +1,4 @@
-<#
+﻿<#
     EMS 화면 전체 UIA 요소 트리 덤프 도구
     ------------------------------------
     Accessibility Insights 같은 별도 프로그램 설치 없이, Windows 기본 PowerShell +

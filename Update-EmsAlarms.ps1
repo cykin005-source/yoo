@@ -1,4 +1,4 @@
-<#
+﻿<#
     EMS 알람코드/알람명 일괄 수정 자동화 스크립트
     ---------------------------------------------
     - Windows PowerShell 5.1(powershell.exe) 기준. PowerShell 7(pwsh.exe)은
