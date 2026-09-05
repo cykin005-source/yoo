@@ -34,11 +34,30 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 
-function Test-PatternSupported {
-    param([System.Windows.Automation.AutomationElement]$Element, $PatternObj)
+# 패턴 클래스 이름을 문자열로 받아서, 리플렉션으로 "있으면 쓰고 없으면 조용히 실패"하게 함.
+# ([System.Windows.Automation.LegacyIAccessiblePattern] 처럼 대괄호로 타입을 직접 쓰면,
+#  그 타입이 이 PC의 .NET 환경에 없을 때 try/catch로도 못 막는 에러가 나서 이렇게 우회함.
+function Get-PatternObjectSafe {
+    param([string]$PatternClassName)
     try {
+        $asm = [System.Windows.Automation.AutomationElement].Assembly
+        $type = $asm.GetType("System.Windows.Automation.$PatternClassName")
+        if (-not $type) { return $null }
+        $field = $type.GetField("Pattern", [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static)
+        if (-not $field) { return $null }
+        return $field.GetValue($null)
+    } catch {
+        return $null
+    }
+}
+
+function Test-PatternSupported {
+    param([System.Windows.Automation.AutomationElement]$Element, [string]$PatternClassName)
+    try {
+        $patternObj = Get-PatternObjectSafe -PatternClassName $PatternClassName
+        if (-not $patternObj) { return $false }
         $p = $null
-        return [bool]$Element.TryGetCurrentPattern($PatternObj, [ref]$p)
+        return [bool]$Element.TryGetCurrentPattern($patternObj, [ref]$p)
     } catch {
         return $false
     }
@@ -68,9 +87,9 @@ function Show-ElementInfo {
         if ($proc) { $procName = $proc.ProcessName }
     } catch { }
 
-    $hasInvoke = Test-PatternSupported -Element $Element -PatternObj ([System.Windows.Automation.InvokePattern]::Pattern)
-    $hasValue  = Test-PatternSupported -Element $Element -PatternObj ([System.Windows.Automation.ValuePattern]::Pattern)
-    $hasLegacy = Test-PatternSupported -Element $Element -PatternObj ([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
+    $hasInvoke = Test-PatternSupported -Element $Element -PatternClassName "InvokePattern"
+    $hasValue  = Test-PatternSupported -Element $Element -PatternClassName "ValuePattern"
+    $hasLegacy = Test-PatternSupported -Element $Element -PatternClassName "LegacyIAccessiblePattern"
 
     Write-Host "${Prefix}[$ct] Name='$name' AutomationId='$autoId'"
     Write-Host "${Prefix}    ClassName='$className' HelpText='$helpText' IsEnabled=$isEnabled"

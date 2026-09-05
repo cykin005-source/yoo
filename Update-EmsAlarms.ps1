@@ -283,24 +283,48 @@ function Set-UiaValue {
 # 6. 버튼 클릭 (InvokePattern 우선, 미지원 시 LegacyIAccessiblePattern)
 # ===================================================================
 
+# [System.Windows.Automation.LegacyIAccessiblePattern] 처럼 대괄호로 타입을 직접 쓰면,
+# 이 PC의 .NET 환경에 그 타입 자체가 없을 때 try/catch로도 못 막는 에러가 날 수 있음
+# (실제로 이 문제가 확인됨). 그래서 리플렉션으로 "있으면 쓰고 없으면 조용히 실패"하게 우회.
+function Get-PatternObjectSafe {
+    param([string]$PatternClassName)
+    try {
+        $asm = [System.Windows.Automation.AutomationElement].Assembly
+        $type = $asm.GetType("System.Windows.Automation.$PatternClassName")
+        if (-not $type) { return $null }
+        $field = $type.GetField("Pattern", [System.Reflection.BindingFlags]::Public -bor [System.Reflection.BindingFlags]::Static)
+        if (-not $field) { return $null }
+        return $field.GetValue($null)
+    } catch {
+        return $null
+    }
+}
+
 function Invoke-UiaClick {
     param([System.Windows.Automation.AutomationElement]$Element)
 
-    $invokePattern = $null
-    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
-        $invokePattern.Invoke()
-        return
+    $invokePatternObj = Get-PatternObjectSafe -PatternClassName "InvokePattern"
+    if ($invokePatternObj) {
+        $invokePattern = $null
+        if ($Element.TryGetCurrentPattern($invokePatternObj, [ref]$invokePattern)) {
+            $invokePattern.Invoke()
+            return
+        }
     }
 
     # InvokePattern 미지원 요소에 대한 대안: LegacyIAccessiblePattern.DoDefaultAction()
-    # (오래된 웹 컨트롤/커스텀 컴포넌트가 IInvokeProvider 를 구현하지 않을 때 사용)
-    $legacyPattern = $null
-    if ($Element.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$legacyPattern)) {
-        $legacyPattern.DoDefaultAction()
-        return
+    # (오래된 웹 컨트롤/커스텀 컴포넌트가 IInvokeProvider 를 구현하지 않을 때 사용.
+    #  이 PC에 LegacyIAccessiblePattern 자체가 없으면 이 블록은 자동으로 건너뜀)
+    $legacyPatternObj = Get-PatternObjectSafe -PatternClassName "LegacyIAccessiblePattern"
+    if ($legacyPatternObj) {
+        $legacyPattern = $null
+        if ($Element.TryGetCurrentPattern($legacyPatternObj, [ref]$legacyPattern)) {
+            $legacyPattern.DoDefaultAction()
+            return
+        }
     }
 
-    throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다."
+    throw "이 요소는 InvokePattern과 LegacyIAccessiblePattern을 모두 지원하지 않습니다(또는 이 PC에 LegacyIAccessiblePattern 자체가 없음)."
 }
 
 # ===================================================================
