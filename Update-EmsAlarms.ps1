@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-D (창 가시성 진단 추가)"
+$ScriptVersion = "2026-09-06-E (숨겨진 중복 요소 회피 - 화면에 보이는 요소 우선 선택)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -299,6 +299,54 @@ function Find-ElementNow {
     return $Parent.FindFirst($Scope, $Condition)
 }
 
+# 같은 조건에 맞는 요소가 여러 개일 때 "화면에 실제로 보이는" 것을 골라 반환한다.
+# 구식 웹 화면은 화면에 보이는 입력칸 말고도 폼 전송용으로 숨겨둔 동일 ID의
+# 입력칸을 같이 두는 경우가 많은데, 숨겨진 쪽을 잡으면 값 입력은 되지만 화면에는
+# 반영되지 않고 위치 정보도 없어서 이후 동작이 전부 어긋난다.
+function Find-VisibleElement {
+    param(
+        [System.Windows.Automation.AutomationElement]$Parent,
+        [System.Windows.Automation.Condition]$Condition,
+        [string]$Label = ""
+    )
+    $all = @()
+    try {
+        $all = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $Condition))
+    } catch { }
+
+    if ($all.Count -eq 0) { return $null }
+
+    $visible = @($all | Where-Object { Test-ElementVisible -Element $_ })
+
+    if ($visible.Count -gt 0) {
+        if ($all.Count -gt 1 -and $Label) {
+            Write-Log "[요소찾기:$Label] 매칭 $($all.Count)개 중 화면에 보이는 것 $($visible.Count)개 -> 보이는 것 사용"
+        }
+        return $visible[0]
+    }
+
+    # 전부 화면에 안 보이는 경우: 원인 파악을 위해 상세 정보를 남긴다.
+    if ($Label) {
+        Write-Log "[요소찾기:$Label] 매칭 $($all.Count)개가 전부 화면에 안 보임(숨겨진 요소 가능성). 상세:"
+        $shown = 0
+        foreach ($e in $all) {
+            if ($shown -ge 5) { break }
+            $rectStr = "없음"
+            $offscreen = "?"
+            $enabled = "?"
+            try {
+                $r = $e.Current.BoundingRectangle
+                if (-not $r.IsEmpty) { $rectStr = "{0},{1},{2},{3}" -f $r.X, $r.Y, $r.Width, $r.Height }
+            } catch { }
+            try { $offscreen = $e.Current.IsOffscreen } catch { }
+            try { $enabled = $e.Current.IsEnabled } catch { }
+            Write-Log "    위치=$rectStr IsOffscreen=$offscreen IsEnabled=$enabled"
+            $shown++
+        }
+    }
+    return $all[0]
+}
+
 # 화면에 실제로 보이는 요소인지(위치 정보가 정상인지) 확인.
 # 화면에 안 보이는 요소는 UIA가 "빈 사각형"(무한대 값)을 돌려주는데, 이걸 그대로
 # 거리 계산에 쓰면 NaN이 되고, NaN은 어떤 비교도 거짓이라 예외도 없이 조용히
@@ -457,8 +505,12 @@ function Wait-ForElementValueNonEmpty {
     )
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        $el = Find-ElementNow -Parent $Parent -Condition $Condition
-        if ($el) {
+        # 같은 조건에 맞는 요소가 여러 개일 수 있으므로, 하나라도 값이 채워졌으면 통과
+        $all = @()
+        try {
+            $all = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $Condition))
+        } catch { }
+        foreach ($el in $all) {
             try {
                 $val = Get-ElementDisplayValue -Element $el
                 if ($val -and $val.Trim() -ne "") { return $true }
@@ -562,13 +614,17 @@ function Invoke-SearchAndOpenUpdateScreen {
     )
 
     # 1) 장비명 + 알람코드 입력 (Search Error Code 화면)
+    #    같은 AutomationId를 가진 요소가 화면에 보이는 것/숨겨진 것 여러 개 있을 수
+    #    있어(폼 전송용 숨김 입력칸 등), 항상 "화면에 보이는" 쪽을 골라 쓴다.
     $cond = New-ConditionFromConfig $Config.EquipmentNameBox
     $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    if (-not $el) { throw "장비명 입력창(SEmNo)을 찾지 못했습니다." }
+    $el = Find-VisibleElement -Parent $MainWindow -Condition $cond -Label "장비명입력창(SEmNo)"
     if (-not $el) { throw "장비명 입력창(SEmNo)을 찾지 못했습니다." }
     Set-UiaValue -Element $el -Value $EquipmentName
 
     $cond = New-ConditionFromConfig $Config.AlarmCodeBox
-    $alarmCodeEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    $alarmCodeEl = Find-VisibleElement -Parent $MainWindow -Condition $cond -Label "알람코드입력창(SPlcErrCode)"
     if (-not $alarmCodeEl) { throw "알람코드 입력창(SPlcErrCode)을 찾지 못했습니다." }
     Set-UiaValue -Element $alarmCodeEl -Value $AlarmCode
 
@@ -649,13 +705,13 @@ function Set-AlarmNameAndSave {
 
     # 상태 입력란에도 동일한 값 입력 (실사용 환경에서 확인된 사양)
     $cond = New-ConditionFromConfig $Config.StatusBox
-    $statusEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    $statusEl = Find-VisibleElement -Parent $MainWindow -Condition $cond -Label "상태입력창(NStatus)"
     if (-not $statusEl) { throw "상태 입력창(NStatus)을 찾지 못했습니다." }
     Set-UiaValue -Element $statusEl -Value $NewAlarmName
 
     # 생성 버튼 클릭
     $cond = New-ConditionFromConfig $Config.GenerateButton
-    $genEl = Find-ElementNow -Parent $MainWindow -Condition $cond
+    $genEl = Find-VisibleElement -Parent $MainWindow -Condition $cond -Label "생성버튼(NGenerate)"
     if (-not $genEl) { throw "생성 버튼을 찾지 못했습니다." }
     Invoke-UiaClick -Element $genEl
 
