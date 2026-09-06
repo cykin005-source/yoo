@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-B (Wait-ForNearestLookupLink 예외메시지 로그 포함)"
+$ScriptVersion = "2026-09-06-C (NaN 버그 수정 + 부모 범위 확장 탐색)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -263,65 +263,100 @@ function Find-ElementNow {
     return $Parent.FindFirst($Scope, $Condition)
 }
 
-# "찾아보기" 링크 전용: Name 텍스트에 의존하지 않는다(값이 채워지면 그 안의
-# 내용을 반영해 이름 자체가 바뀌는 것으로 보여, 이름 일치/포함 방식 둘 다
-# 불안정했음). 대신 ControlType(Hyperlink)만으로 후보를 모은 뒤, 기준 요소
-# (알람코드 입력창)와 화면상 위치(X,Y 모두)가 가장 가까운 것을 고른다.
-# 화면 갱신 타이밍에 걸리는 경우를 대비해 타임아웃까지 폴링 재시도한다.
+# 화면에 실제로 보이는 요소인지(위치 정보가 정상인지) 확인.
+# 화면에 안 보이는 요소는 UIA가 "빈 사각형"(무한대 값)을 돌려주는데, 이걸 그대로
+# 거리 계산에 쓰면 NaN이 되고, NaN은 어떤 비교도 거짓이라 예외도 없이 조용히
+# 후보에서 전부 탈락해버린다(실제로 이 문제로 한참 헤맴).
+function Test-ElementVisible {
+    param([System.Windows.Automation.AutomationElement]$Element)
+    try {
+        $r = $Element.Current.BoundingRectangle
+        if ($r.IsEmpty) { return $false }
+        if ([double]::IsNaN($r.X) -or [double]::IsInfinity($r.X)) { return $false }
+        if ([double]::IsNaN($r.Y) -or [double]::IsInfinity($r.Y)) { return $false }
+        if ([double]::IsNaN($r.Width) -or [double]::IsInfinity($r.Width)) { return $false }
+        if ($r.Width -le 0 -or $r.Height -le 0) { return $false }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# "찾아보기" 링크 찾기.
+# 화면 전체에서 Hyperlink를 뒤지면 브라우저 자체의 숨겨진 메뉴 링크들까지 잔뜩
+# 딸려와서(실측 37개, 전부 화면 밖) 정작 원하는 링크를 못 고른다. 그래서
+# 알람코드 입력창에서 출발해 부모(조상)를 한 단계씩 올라가며, 그 범위 안에서
+# "화면에 실제로 보이는" Hyperlink만 후보로 삼아 가장 가까운 것을 고른다.
+# Name 텍스트에는 의존하지 않는다(값이 채워지면 이름이 바뀌는 것으로 보임).
 function Wait-ForNearestLookupLink {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
         [string]$ControlTypeName,
         [System.Windows.Automation.AutomationElement]$ReferenceElement,
-        [int]$TimeoutSec = 10
+        [int]$TimeoutSec = 10,
+        [int]$MaxAncestorLevels = 6
     )
     $ct = Get-ControlTypeByName $ControlTypeName
     $ctCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+
     $refRect = $ReferenceElement.Current.BoundingRectangle
     $refX = $refRect.X + ($refRect.Width / 2)
     $refY = $refRect.Y + ($refRect.Height / 2)
-    Write-Log "[Wait-ForNearestLookupLink] 기준(알람코드 입력창) 위치=$($refRect.X),$($refRect.Y),$($refRect.Width),$($refRect.Height)"
+    Write-Log ("[LookupLink] 기준(알람코드 입력창) 위치={0:F0},{1:F0},{2:F0},{3:F0}" -f $refRect.X, $refRect.Y, $refRect.Width, $refRect.Height)
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $iteration = 0
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
         $iteration++
-        $candidates = @($Parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition))
-        Write-Log "[Wait-ForNearestLookupLink] 시도 $iteration - ControlType=$ControlTypeName 후보 개수=$($candidates.Count)"
+        $logDetail = ($iteration -eq 1)   # 첫 시도에서만 상세 로그(로그 폭주 방지)
 
-        if ($candidates.Count -gt 0) {
-            $best = $null
-            $bestDist = [double]::MaxValue
-            $errorLogged = $false
-            $errorCount = 0
-            foreach ($c in $candidates) {
-                try {
-                    $r = $c.Current.BoundingRectangle
-                    $cx = $r.X + ($r.Width / 2)
-                    $cy = $r.Y + ($r.Height / 2)
-                    $dist = [math]::Sqrt([math]::Pow($cx - $refX, 2) + [math]::Pow($cy - $refY, 2))
-                    if ($dist -lt $bestDist) {
-                        $bestDist = $dist
-                        $best = $c
-                    }
-                } catch {
-                    $errorCount++
-                    if (-not $errorLogged) {
-                        Write-Log "[Wait-ForNearestLookupLink] BoundingRectangle 읽기 실패 예시: $($_.Exception.Message)"
-                        $errorLogged = $true
-                    }
+        # 입력창 자신 -> 부모 -> 조부모 ... 순으로 범위를 넓혀가며 찾는다.
+        $scope = $ReferenceElement
+        for ($level = 0; $level -le $MaxAncestorLevels; $level++) {
+            if (-not $scope) { break }
+
+            $candidates = @()
+            try {
+                $candidates = @($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition))
+            } catch { }
+
+            $visible = @($candidates | Where-Object { Test-ElementVisible -Element $_ })
+
+            if ($logDetail) {
+                Write-Log "[LookupLink] 부모 $level 단계 범위 - Hyperlink 후보=$($candidates.Count)개, 그중 화면에 보이는 것=$($visible.Count)개"
+            }
+
+            if ($visible.Count -gt 0) {
+                $best = $null
+                $bestDist = [double]::MaxValue
+                foreach ($c in $visible) {
+                    try {
+                        $r = $c.Current.BoundingRectangle
+                        $cx = $r.X + ($r.Width / 2)
+                        $cy = $r.Y + ($r.Height / 2)
+                        $dist = [math]::Sqrt([math]::Pow($cx - $refX, 2) + [math]::Pow($cy - $refY, 2))
+                        if ($logDetail) {
+                            $n = ""
+                            try { $n = $c.Current.Name } catch { }
+                            Write-Log ("    후보: Name='{0}' 위치={1:F0},{2:F0},{3:F0},{4:F0} 거리={5:F0}" -f $n, $r.X, $r.Y, $r.Width, $r.Height, $dist)
+                        }
+                        if ($dist -lt $bestDist) {
+                            $bestDist = $dist
+                            $best = $c
+                        }
+                    } catch { }
+                }
+                if ($best) {
+                    Write-Log ("[LookupLink] 선택됨 - 부모 {0}단계 범위, 거리={1:F0}" -f $level, $bestDist)
+                    return $best
                 }
             }
-            if ($best) {
-                Write-Log "[Wait-ForNearestLookupLink] 최적 후보 발견, 거리=$([math]::Round($bestDist,1))"
-                return $best
-            }
-            if ($errorCount -gt 0) {
-                Write-Log "[Wait-ForNearestLookupLink] 후보 $($candidates.Count)개 중 $errorCount 개가 BoundingRectangle 읽기 실패"
-            }
-            Write-Log "[Wait-ForNearestLookupLink] 후보는 있었으나 전부 BoundingRectangle 계산 실패"
+
+            try { $scope = $walker.GetParent($scope) } catch { $scope = $null }
         }
+
         Start-Sleep -Milliseconds $PollingIntervalMs
     }
     return $null
