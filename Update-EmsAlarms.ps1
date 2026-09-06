@@ -33,6 +33,10 @@ param(
     [int]$TestModeRows = 2
 )
 
+# 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
+# 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
+$ScriptVersion = "2026-09-06-B (Wait-ForNearestLookupLink 예외메시지 로그 포함)"
+
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
 }
@@ -721,7 +725,7 @@ function Add-ResultToWindow {
 # 11. 메인 실행부
 # ===================================================================
 
-Write-Log "===== EMS 알람 자동화 시작 ====="
+Write-Log "===== EMS 알람 자동화 시작 (스크립트 버전: $ScriptVersion) ====="
 
 if (Test-Path -LiteralPath $StopFlagPath) {
     Remove-Item -LiteralPath $StopFlagPath -Force
