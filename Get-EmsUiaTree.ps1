@@ -22,7 +22,8 @@
     3) 클릭/입력 가능한 요소만 빠르게 보고 싶다면:
          .\Get-EmsUiaTree.ps1 -OnlyInteractable
 
-    4) Name/ClassName에 특정 문자열이 포함된 요소만 보고 싶다면:
+    4) Name/AutomationId/ClassName(=F12의 class 속성) 중 아무 곳에나 특정
+       문자열이 포함된 요소만 보고 싶다면:
          .\Get-EmsUiaTree.ps1 -Filter "알람"
 
     5) 화면이 너무 복잡해서 얕은 깊이까지만 빠르게 훑어보고 싶다면:
@@ -37,7 +38,7 @@
 param(
     [int]$MaxDepth = 0,          # 0 = 무제한. 화면이 복잡할 때만 작은 값으로 제한.
     [switch]$OnlyInteractable,   # InvokePattern 또는 ValuePattern 지원 요소만 출력
-    [string]$Filter,             # Name 또는 ClassName에 이 문자열이 포함된 요소만 출력
+    [string]$Filter,             # Name, AutomationId, ClassName(=F12의 class 속성) 중 어디든 이 문자열이 포함된 요소만 출력
     [int]$ProgressInterval = 200 # 몇 개 요소마다 진행 상황을 출력할지
 )
 
@@ -177,6 +178,7 @@ function Build-ElementLine {
     return [pscustomobject]@{
         Line = $line
         Name = $name
+        AutomationId = $autoId
         ClassName = $className
         HasInvoke = $hasInvoke
         HasValue = $hasValue
@@ -197,7 +199,7 @@ function Walk-Tree {
         $include = $true
         if ($OnlyInteractable) { $include = ($info.HasInvoke -or $info.HasValue) }
         if ($include -and $Filter) {
-            $include = ($info.Name -like "*$Filter*") -or ($info.ClassName -like "*$Filter*")
+            $include = ($info.Name -like "*$Filter*") -or ($info.AutomationId -like "*$Filter*") -or ($info.ClassName -like "*$Filter*")
         }
         if ($include) {
             $lines.Add($info.Line)
