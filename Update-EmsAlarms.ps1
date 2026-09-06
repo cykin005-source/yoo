@@ -289,6 +289,8 @@ function Wait-ForNearestLookupLink {
         if ($candidates.Count -gt 0) {
             $best = $null
             $bestDist = [double]::MaxValue
+            $errorLogged = $false
+            $errorCount = 0
             foreach ($c in $candidates) {
                 try {
                     $r = $c.Current.BoundingRectangle
@@ -299,11 +301,20 @@ function Wait-ForNearestLookupLink {
                         $bestDist = $dist
                         $best = $c
                     }
-                } catch { }
+                } catch {
+                    $errorCount++
+                    if (-not $errorLogged) {
+                        Write-Log "[Wait-ForNearestLookupLink] BoundingRectangle 읽기 실패 예시: $($_.Exception.Message)"
+                        $errorLogged = $true
+                    }
+                }
             }
             if ($best) {
                 Write-Log "[Wait-ForNearestLookupLink] 최적 후보 발견, 거리=$([math]::Round($bestDist,1))"
                 return $best
+            }
+            if ($errorCount -gt 0) {
+                Write-Log "[Wait-ForNearestLookupLink] 후보 $($candidates.Count)개 중 $errorCount 개가 BoundingRectangle 읽기 실패"
             }
             Write-Log "[Wait-ForNearestLookupLink] 후보는 있었으나 전부 BoundingRectangle 계산 실패"
         }
