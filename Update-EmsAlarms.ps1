@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-G (좌표 미사용 구조기반 탐색으로 전환)"
+$ScriptVersion = "2026-09-06-H (ClassName 조건 지원 추가)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -57,10 +57,12 @@ $Config = @{
     # 이 값이 채워질 때까지 폴링).
     AutoFilledErrDescBox = @{ AutomationId = "SPlcErrDesc";                  Name = "TODO";                     ControlType = "Edit" }
     # "찾아보기" 링크. SPlcErrDesc 값이 채워지면 이 링크의 Name 자체가 바뀌는
-    # 것으로 보여, Name은 더 이상 매칭에 안 쓰고 참고용으로만 남겨둠. 실제로는
-    # ControlType(Hyperlink)만으로 후보를 모은 뒤 알람코드 입력창과 위치가
-    # 가장 가까운 것을 찾음(Wait-ForNearestLookupLink 참고).
-    LookupLink         = @{ AutomationId = "TODO";                           Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
+    # 것으로 보여 Name은 매칭에 안 씀. 이 환경은 좌표(BoundingRectangle)도
+    # 못 쓰는 것으로 확인되어, 현재는 ControlType(Hyperlink)만으로 후보를 찾은 뒤
+    # 알람코드 입력창의 조상 범위 안에서 구조적으로 가장 가까운 것을 씀
+    # (Wait-ForNearestLookupLink 참고). ClassName을 채우면 훨씬 더 정확해짐 -
+    # F12에서 이 링크의 class 속성 값을 확인해서 채워 넣으세요.
+    LookupLink         = @{ AutomationId = "TODO"; ClassName = "TODO";       Name = "Search: 설비 에러 코드";   ControlType = "Hyperlink" }
     PopupRadioItem     = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "RadioButton" }
     PopupConfirmButton = @{ AutomationId = "TODO";                           Name = "Select";                   ControlType = "Button" }
     SearchButton       = @{ AutomationId = "Find";                          Name = "조회";                     ControlType = "Button" }
@@ -150,6 +152,12 @@ function New-ConditionFromConfig {
         $ct = Get-ControlTypeByName $Item.ControlType
         $conditions.Add((New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)))
+    }
+    # ClassName(F12의 class 속성) - Name보다 안정적인 경우가 많음(내용이 아니라
+    # "어떤 종류의 부품인지"를 나타내서 값이 바뀌어도 잘 안 바뀜)
+    if ($Item.ClassName -and $Item.ClassName -ne "TODO") {
+        $conditions.Add((New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ClassNameProperty, $Item.ClassName)))
     }
 
     if ($conditions.Count -eq 0) { throw "요소 조건이 비어있습니다. `$Config 값을 채워주세요." }
@@ -385,14 +393,12 @@ function Test-ElementVisible {
 function Wait-ForNearestLookupLink {
     param(
         [System.Windows.Automation.AutomationElement]$Parent,
-        [string]$ControlTypeName,
+        [System.Windows.Automation.Condition]$Condition,
         [System.Windows.Automation.AutomationElement]$ReferenceElement,
         [int]$TimeoutSec = 10,
         [int]$MaxAncestorLevels = 8
     )
-    $ct = Get-ControlTypeByName $ControlTypeName
-    $ctCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)
+    $ctCondition = $Condition
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -413,9 +419,13 @@ function Wait-ForNearestLookupLink {
             } catch { }
 
             if ($logDetail) {
-                $n = ""
-                if ($found) { try { $n = $found.Current.Name } catch { } }
-                Write-Log "[LookupLink] 부모 $level 단계 범위 - Hyperlink $(if ($found) { "발견 (Name='$n')" } else { "없음" })"
+                $n = ""; $cls = ""; $aid = ""
+                if ($found) {
+                    try { $n = $found.Current.Name } catch { }
+                    try { $cls = $found.Current.ClassName } catch { }
+                    try { $aid = $found.Current.AutomationId } catch { }
+                }
+                Write-Log "[LookupLink] 부모 $level 단계 범위 - Hyperlink $(if ($found) { "발견 (Name='$n' ClassName='$cls' AutomationId='$aid')" } else { "없음" })"
             }
 
             if ($found) {
@@ -623,7 +633,10 @@ function Invoke-SearchAndOpenUpdateScreen {
     #    알람코드 입력창을 기준으로 부모 범위를 넓혀가며, 그 안에서 처음 발견되는
     #    Hyperlink를 찾아 클릭한다(이 환경은 좌표 정보가 통째로 제공되지 않아
     #    구조 기반으로만 찾음. Wait-ForNearestLookupLink 주석 참고).
-    $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
+    #    Name은 값이 채워지면 바뀌는 것으로 확인되어 조건에서 제외하고,
+    #    ControlType(+ 채워져 있으면 ClassName)만으로 찾는다.
+    $lookupCond = New-ConditionFromConfig @{ AutomationId = $Config.LookupLink.AutomationId; ClassName = $Config.LookupLink.ClassName; ControlType = $Config.LookupLink.ControlType }
+    $el = Wait-ForNearestLookupLink -Parent $MainWindow -Condition $lookupCond `
         -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "알람코드 입력창 근처에서 찾아보기 링크(Hyperlink)를 찾지 못했습니다." }
     Write-ElementDebugInfo -Element $el -Label "찾아보기 링크(클릭 대상)"
