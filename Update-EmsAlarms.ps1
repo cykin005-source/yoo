@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-F (IsOffscreen 속성으로 가시성 판단 개선)"
+$ScriptVersion = "2026-09-06-G (좌표 미사용 구조기반 탐색으로 전환)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -370,11 +370,17 @@ function Test-ElementVisible {
     }
 }
 
-# "찾아보기" 링크 찾기.
-# 화면 전체에서 Hyperlink를 뒤지면 브라우저 자체의 숨겨진 메뉴 링크들까지 잔뜩
-# 딸려와서(실측 37개, 전부 화면 밖) 정작 원하는 링크를 못 고른다. 그래서
-# 알람코드 입력창에서 출발해 부모(조상)를 한 단계씩 올라가며, 그 범위 안에서
-# "화면에 실제로 보이는" Hyperlink만 후보로 삼아 가장 가까운 것을 고른다.
+# "찾아보기" 링크 찾기 - 좌표(BoundingRectangle)에 전혀 의존하지 않는 방식.
+#
+# 이 환경(사내 VDI/원격 세션)에서는 BoundingRectangle이 모든 요소에 대해
+# 무한대(좌표 없음)로 나오는 것이 확인됨 - 값 입력/클릭 명령은 정상 동작하지만
+# 좌표 정보 자체가 이 환경에서 통째로 제공되지 않는 것으로 보임. 그래서 화면
+# 위치로 "가장 가까운 것"을 고르는 방식은 이 환경에서 원천적으로 불가능하다.
+#
+# 대신 구조(트리 상의 위치)만으로 찾는다: 알람코드 입력창에서 출발해 부모
+# (조상)를 한 단계씩 올라가며, 그 범위 안에서 처음 발견되는 Hyperlink를 그대로
+# 사용한다. 돋보기 아이콘은 입력창의 가까운 조상 안에 함께 있으므로, 범위를
+# 좁게(0단계)부터 넓혀가면 가장 가까운(관련있는) 것이 먼저 걸린다.
 # Name 텍스트에는 의존하지 않는다(값이 채워지면 이름이 바뀌는 것으로 보임).
 function Wait-ForNearestLookupLink {
     param(
@@ -382,17 +388,12 @@ function Wait-ForNearestLookupLink {
         [string]$ControlTypeName,
         [System.Windows.Automation.AutomationElement]$ReferenceElement,
         [int]$TimeoutSec = 10,
-        [int]$MaxAncestorLevels = 6
+        [int]$MaxAncestorLevels = 8
     )
     $ct = Get-ControlTypeByName $ControlTypeName
     $ctCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ct)
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-
-    $refRect = $ReferenceElement.Current.BoundingRectangle
-    $refX = $refRect.X + ($refRect.Width / 2)
-    $refY = $refRect.Y + ($refRect.Height / 2)
-    Write-Log ("[LookupLink] 기준(알람코드 입력창) 위치={0:F0},{1:F0},{2:F0},{3:F0}" -f $refRect.X, $refRect.Y, $refRect.Width, $refRect.Height)
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $iteration = 0
@@ -400,46 +401,26 @@ function Wait-ForNearestLookupLink {
         $iteration++
         $logDetail = ($iteration -eq 1)   # 첫 시도에서만 상세 로그(로그 폭주 방지)
 
-        # 입력창 자신 -> 부모 -> 조부모 ... 순으로 범위를 넓혀가며 찾는다.
+        # 입력창 자신 -> 부모 -> 조부모 ... 순으로 범위를 넓혀가며, 그 범위 안에서
+        # "처음 발견되는" Hyperlink를 그대로 사용(좌표 계산 없음).
         $scope = $ReferenceElement
         for ($level = 0; $level -le $MaxAncestorLevels; $level++) {
             if (-not $scope) { break }
 
-            $candidates = @()
+            $found = $null
             try {
-                $candidates = @($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ctCondition))
+                $found = $scope.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $ctCondition)
             } catch { }
 
-            $visible = @($candidates | Where-Object { Test-ElementVisible -Element $_ })
-
             if ($logDetail) {
-                Write-Log "[LookupLink] 부모 $level 단계 범위 - Hyperlink 후보=$($candidates.Count)개, 그중 화면에 보이는 것=$($visible.Count)개"
+                $n = ""
+                if ($found) { try { $n = $found.Current.Name } catch { } }
+                Write-Log "[LookupLink] 부모 $level 단계 범위 - Hyperlink $(if ($found) { "발견 (Name='$n')" } else { "없음" })"
             }
 
-            if ($visible.Count -gt 0) {
-                $best = $null
-                $bestDist = [double]::MaxValue
-                foreach ($c in $visible) {
-                    try {
-                        $r = $c.Current.BoundingRectangle
-                        $cx = $r.X + ($r.Width / 2)
-                        $cy = $r.Y + ($r.Height / 2)
-                        $dist = [math]::Sqrt([math]::Pow($cx - $refX, 2) + [math]::Pow($cy - $refY, 2))
-                        if ($logDetail) {
-                            $n = ""
-                            try { $n = $c.Current.Name } catch { }
-                            Write-Log ("    후보: Name='{0}' 위치={1:F0},{2:F0},{3:F0},{4:F0} 거리={5:F0}" -f $n, $r.X, $r.Y, $r.Width, $r.Height, $dist)
-                        }
-                        if ($dist -lt $bestDist) {
-                            $bestDist = $dist
-                            $best = $c
-                        }
-                    } catch { }
-                }
-                if ($best) {
-                    Write-Log ("[LookupLink] 선택됨 - 부모 {0}단계 범위, 거리={1:F0}" -f $level, $bestDist)
-                    return $best
-                }
+            if ($found) {
+                Write-Log "[LookupLink] 선택됨 - 부모 $level 단계 범위 (구조 기반, 좌표 미사용)"
+                return $found
             }
 
             try { $scope = $walker.GetParent($scope) } catch { $scope = $null }
@@ -639,16 +620,9 @@ function Invoke-SearchAndOpenUpdateScreen {
     if (-not $filled) { throw "설비 에러명 자동 입력(SPlcErrDesc)이 채워지는 것을 확인하지 못했습니다." }
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
-    #    알람코드 입력창을 기준으로, 부모 범위를 넓혀가며 화면에 실제로 보이는
-    #    Hyperlink 중 가장 가까운 것을 찾아 클릭한다.
-    #
-    #    먼저 기준 요소가 "화면에 실제로 보이는지" 확인한다. 창이 최소화되어
-    #    있거나 화면 밖에 있으면 값 입력은 되지만 위치 정보가 전부 사라져서,
-    #    위치 기반 탐색이 통째로 실패한다(원인 파악이 어려우므로 여기서 명확히 끊음).
-    if (-not (Test-ElementVisible -Element $alarmCodeEl)) {
-        throw "알람코드 입력창이 화면에 보이지 않는 상태입니다(위치 정보 없음). EMS 창이 최소화되어 있거나, 화면 밖에 있거나, 다른 탭이 보이는 상태가 아닌지 확인하세요."
-    }
-
+    #    알람코드 입력창을 기준으로 부모 범위를 넓혀가며, 그 안에서 처음 발견되는
+    #    Hyperlink를 찾아 클릭한다(이 환경은 좌표 정보가 통째로 제공되지 않아
+    #    구조 기반으로만 찾음. Wait-ForNearestLookupLink 주석 참고).
     $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
         -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "알람코드 입력창 근처에서 찾아보기 링크(Hyperlink)를 찾지 못했습니다." }
@@ -884,6 +858,16 @@ if ($TestMode) {
 Write-Log "대상 EMS 창을 찾는 중 (제목에 '$EmsWindowTitleContains' 포함)..."
 $window = Find-EmsWindow -TitleContains $EmsWindowTitleContains
 Write-Log "대상 창 확보. PID=$($window.Current.ProcessId), 제목='$($window.Current.Name)'"
+
+# 진단: 이 환경(VDI/원격 세션 등)에서 좌표 정보가 통째로 제공되지 않는지 확인.
+# 창 자체가 무한대로 나오면 이 세션의 좌표 시스템 자체가 동작하지 않는 것이고,
+# 창은 정상인데 그 안의 요소들만 무한대면 다른 원인(숨겨진 중복 요소 등)이다.
+try {
+    $wr = $window.Current.BoundingRectangle
+    Write-Log ("[진단] 창 자체의 BoundingRectangle = {0},{1},{2},{3} (IsOffscreen={4})" -f $wr.X, $wr.Y, $wr.Width, $wr.Height, $window.Current.IsOffscreen)
+} catch {
+    Write-Log "[진단] 창 자체의 BoundingRectangle 읽기 실패: $($_.Exception.Message)"
+}
 
 # 결과 파일은 이번 실행 기준으로 새로 시작 (행마다 즉시 추가 저장됨)
 if (Test-Path -LiteralPath $ResultCsvPath) {
