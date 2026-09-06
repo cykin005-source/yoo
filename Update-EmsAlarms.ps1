@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-C (NaN 버그 수정 + 부모 범위 확장 탐색)"
+$ScriptVersion = "2026-09-06-D (창 가시성 진단 추가)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -178,6 +178,22 @@ function Get-PatternObjectSafe {
 # 3. 창 찾기 - 메인 창은 PID 고정(엣지 프로세스만 대상), 팝업은 뜰 때마다 새로 찾음
 # ===================================================================
 
+# 창이 현재 최소화 상태인지 확인 (최소화된 창은 내부 요소들의 화면 위치가
+# 전부 "없음"으로 나와서, 위치 기반 탐색이 통째로 실패한다)
+function Get-WindowVisualState {
+    param([System.Windows.Automation.AutomationElement]$Window)
+    try {
+        $wpObj = Get-PatternObjectSafe -PatternClassName "WindowPattern"
+        if ($wpObj) {
+            $wp = $null
+            if ($Window.TryGetCurrentPattern($wpObj, [ref]$wp)) {
+                return $wp.Current.WindowVisualState.ToString()
+            }
+        }
+    } catch { }
+    return "알수없음"
+}
+
 function Find-EmsWindow {
     param([string]$TitleContains)
 
@@ -204,9 +220,29 @@ function Find-EmsWindow {
     if ($matches.Count -eq 0) {
         throw "실행 중인 엣지 창 중에서 제목에 '$TitleContains' 를 포함하는 창을 찾지 못했습니다."
     }
-    if ($matches.Count -gt 1) {
-        Write-Log "경고: 제목이 일치하는 엣지 창이 $($matches.Count)개 발견됨. 첫 번째 창을 사용합니다."
+
+    # 후보 창들의 상태를 전부 로그에 남기고, "실제로 화면에 보이는" 창을 우선 선택.
+    # (최소화되었거나 화면 밖에 있는 창을 잡으면, 값 입력은 되지만 위치 정보가
+    #  전부 없어서 위치 기반 탐색이 전부 실패한다)
+    $visibleMatch = $null
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+        $w = $matches[$i]
+        $rectStr = "없음"
+        $state = Get-WindowVisualState -Window $w
+        $isVisible = Test-ElementVisible -Element $w
+        try {
+            $r = $w.Current.BoundingRectangle
+            $rectStr = "{0},{1},{2},{3}" -f $r.X, $r.Y, $r.Width, $r.Height
+        } catch { }
+        Write-Log "[창후보 $i] 제목='$($w.Current.Name)' PID=$($w.Current.ProcessId) 상태=$state 화면에보임=$isVisible 위치=$rectStr"
+        if ($isVisible -and (-not $visibleMatch)) { $visibleMatch = $w }
     }
+
+    if ($visibleMatch) {
+        return $visibleMatch
+    }
+
+    Write-Log "경고: 제목이 일치하는 엣지 창은 있으나 '화면에 실제로 보이는' 창이 없습니다(최소화되었거나 화면 밖일 수 있음). 첫 번째 창으로 진행합니다."
     return $matches[0]
 }
 
@@ -543,9 +579,16 @@ function Invoke-SearchAndOpenUpdateScreen {
     if (-not $filled) { throw "설비 에러명 자동 입력(SPlcErrDesc)이 채워지는 것을 확인하지 못했습니다." }
 
     # 2) 찾아보기(Hyperlink) 클릭 -> 값 선택 팝업 대기
-    #    같은 이름 계열의 "찾아보기" 링크가 화면에 여러 개(다른 필드용) 있고,
-    #    정확한 문구도 입력 시점에 따라 조금 달라질 수 있어 "포함" 여부로 찾고,
-    #    그 중 알람코드 입력창과 세로 위치가 가장 가까운 것을 찾아 클릭한다.
+    #    알람코드 입력창을 기준으로, 부모 범위를 넓혀가며 화면에 실제로 보이는
+    #    Hyperlink 중 가장 가까운 것을 찾아 클릭한다.
+    #
+    #    먼저 기준 요소가 "화면에 실제로 보이는지" 확인한다. 창이 최소화되어
+    #    있거나 화면 밖에 있으면 값 입력은 되지만 위치 정보가 전부 사라져서,
+    #    위치 기반 탐색이 통째로 실패한다(원인 파악이 어려우므로 여기서 명확히 끊음).
+    if (-not (Test-ElementVisible -Element $alarmCodeEl)) {
+        throw "알람코드 입력창이 화면에 보이지 않는 상태입니다(위치 정보 없음). EMS 창이 최소화되어 있거나, 화면 밖에 있거나, 다른 탭이 보이는 상태가 아닌지 확인하세요."
+    }
+
     $el = Wait-ForNearestLookupLink -Parent $MainWindow -ControlTypeName $Config.LookupLink.ControlType `
         -ReferenceElement $alarmCodeEl -TimeoutSec $TimeoutSec
     if (-not $el) { throw "알람코드 입력창 근처에서 찾아보기 링크(Hyperlink)를 찾지 못했습니다." }
