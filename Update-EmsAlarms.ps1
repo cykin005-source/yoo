@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-E (숨겨진 중복 요소 회피 - 화면에 보이는 요소 우선 선택)"
+$ScriptVersion = "2026-09-06-F (IsOffscreen 속성으로 가시성 판단 개선)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -354,6 +354,10 @@ function Find-VisibleElement {
 function Test-ElementVisible {
     param([System.Windows.Automation.AutomationElement]$Element)
     try {
+        # IsOffscreen이 Microsoft가 만들어둔 공식 판단 기준(요소가 화면 밖/숨김
+        # 상태인지). BoundingRectangle을 직접 뜯어보는 것보다 이게 더 정확함.
+        if ($Element.Current.IsOffscreen) { return $false }
+
         $r = $Element.Current.BoundingRectangle
         if ($r.IsEmpty) { return $false }
         if ([double]::IsNaN($r.X) -or [double]::IsInfinity($r.X)) { return $false }
