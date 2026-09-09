@@ -35,7 +35,7 @@ param(
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-06-H (ClassName 조건 지원 추가)"
+$ScriptVersion = "2026-09-09-I (팝업닫힘/조회버튼 타이밍 로그 추가)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -652,15 +652,21 @@ function Invoke-SearchAndOpenUpdateScreen {
     Select-UiaRadioButton -Element $radioEl
 
     # 4) 팝업의 Select 버튼으로 확정 -> 팝업이 닫힐 때까지 대기
+    #    (아래 [타이밍] 로그는 "조회 버튼을 늦게 누른다"는 체감 지연의 원인이
+    #    팝업 닫힘 감지 단계인지, 조회 버튼을 찾는 단계인지 구분하기 위한 진단용)
     $cond = New-ConditionFromConfig $Config.PopupConfirmButton
     $confirmEl = Find-ElementNow -Parent $popup -Condition $cond
     if (-not $confirmEl) { throw "팝업의 Select 확정 버튼을 찾지 못했습니다." }
+    $timingSw = [System.Diagnostics.Stopwatch]::StartNew()
     Invoke-UiaClick -Element $confirmEl
-    Wait-ForWindowClosed -Window $popup -TimeoutSec $TimeoutSec | Out-Null
+    $popupClosed = Wait-ForWindowClosed -Window $popup -TimeoutSec $TimeoutSec
+    Write-Log "[타이밍] Select 클릭 후 팝업 닫힘 감지까지: $($timingSw.ElapsedMilliseconds)ms (감지성공=$popupClosed)"
 
     # 5) 조회 버튼 클릭
+    $timingSw.Restart()
     $cond = New-ConditionFromConfig $Config.SearchButton
     $el = Wait-UIAElement -Parent $MainWindow -Condition $cond -TimeoutSec $TimeoutSec
+    Write-Log "[타이밍] 팝업 닫힘 감지 후 조회 버튼을 찾기까지: $($timingSw.ElapsedMilliseconds)ms"
     if (-not $el) { throw "조회 버튼을 찾지 못했습니다." }
     Invoke-UiaClick -Element $el
 
