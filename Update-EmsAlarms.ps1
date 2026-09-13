@@ -30,12 +30,18 @@
 param(
     # 테스트 모드: data.csv 전체가 아니라 앞의 $TestModeRows 건만 처리
     [switch]$TestMode,
-    [int]$TestModeRows = 2
+    [int]$TestModeRows = 2,
+
+    # 정지 키(기본 F8). 이 VDI 환경이 F8을 가로채서 안 먹히면, 아래 숫자만 바꿔서
+    # 다른 키로 시도해보면 됩니다(키보드 가상키 코드).
+    #   F7=0x76  F8=0x77  F9=0x78  F10=0x79  F11=0x7A  F12=0x7B  ScrollLock=0x91  Pause=0x13
+    [int]$StopKeyCode = 0x77,
+    [string]$StopKeyName = "F8"
 )
 
 # 파일이 최신 버전인지 헷갈리지 않도록, 실행할 때마다 콘솔/로그에 이 값을 표시함.
 # 새 버전을 받으면 이 문자열이 바뀌어 있어야 정상(다르면 옛날 파일을 실행 중인 것).
-$ScriptVersion = "2026-09-09-I (팝업닫힘/조회버튼 타이밍 로그 추가)"
+$ScriptVersion = "2026-09-13-J (F8 정지키 추가)"
 
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
     Write-Warning "이 스크립트는 Windows PowerShell 5.1(powershell.exe) 기준으로 검증되었습니다. 현재 PSEdition='$($PSVersionTable.PSEdition)' 입니다."
@@ -98,6 +104,23 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# 키보드의 "지금 이 키가 눌려 있나?"를 창 포커스와 무관하게 물어보는 Windows 기본
+# 함수(user32.dll). 설치나 관리자 권한 불필요.
+#
+# 정지 키가 안 먹히는 흔한 원인과, 이 방식이 그걸 피하는 이유:
+#   - RegisterHotKey(전역 단축키) 방식은 프로그램이 Windows 메시지 큐를 계속
+#     처리해줘야 인식되는데, 자동화 동작(클릭/대기)을 동기 방식으로 하는 동안엔
+#     그 처리가 멈춰 있어서 키를 놓친다.
+#   - Console::ReadKey 방식은 콘솔 창에 포커스가 있어야 하고, 역시 그 코드가
+#     실행되는 순간에만 확인이 된다.
+#   - GetAsyncKeyState 는 "물리적인 키 상태"를 그때그때 직접 물어보는 방식이라
+#     포커스도 메시지 큐도 필요 없다. 그래서 아래처럼 별도 스레드에서 계속
+#     물어보게 해두면, 본체가 자동화로 바쁜 동안에도 키를 놓치지 않는다.
+Add-Type -Namespace EmsAutomation -Name StopKeyNative -MemberDefinition @'
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
+'@
 
 function Write-Log {
     param([string]$Message)
@@ -592,7 +615,54 @@ function Select-UiaRadioButton {
 # 6. 안전 정지(STOP.txt) 확인
 # ===================================================================
 
+# 정지 요청 상태를 본체와 감시 스레드가 같이 쓰는 공유 저장소.
+# Synchronized 로 만들어 두 스레드가 동시에 건드려도 안전하게 함.
+$script:StopState = [hashtable]::Synchronized(@{ KeyPressed = $false; Exit = $false })
+
+# 키보드 감시를 본체와 별개의 스레드(러스페이스)에서 돌린다. 본체가 UIA 호출로
+# 몇 초씩 멈춰 있어도 이 스레드는 40ms마다 계속 키 상태를 확인하므로, 그 사이에
+# 키를 한 번 톡 눌러도 놓치지 않고 잡아서 공유 저장소에 "눌렸음"으로 기록한다.
+# (한 번 기록되면 지워지지 않으므로, 본체는 자기가 한가해질 때 확인하면 됨)
+function Start-StopKeyWatcher {
+    param([int]$VirtualKeyCode)
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.Open()
+    $rs.SessionStateProxy.SetVariable("StopState", $script:StopState)
+    $rs.SessionStateProxy.SetVariable("VkCode", $VirtualKeyCode)
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript({
+        # 스크립트 시작 전에 눌려 있던 잔여 키 상태를 한 번 읽어서 비움
+        [void][EmsAutomation.StopKeyNative]::GetAsyncKeyState($VkCode)
+        while (-not $StopState.Exit) {
+            # 0x8000 = 지금 눌려 있음, 0x0001 = 지난번 확인 이후에 눌린 적 있음
+            if (([EmsAutomation.StopKeyNative]::GetAsyncKeyState($VkCode) -band 0x8001) -ne 0) {
+                $StopState.KeyPressed = $true
+                break
+            }
+            Start-Sleep -Milliseconds 40
+        }
+    })
+    $handle = $ps.BeginInvoke()
+    return [pscustomobject]@{ PowerShell = $ps; Runspace = $rs; Handle = $handle }
+}
+
+function Stop-StopKeyWatcher {
+    param($Watcher)
+    if (-not $Watcher) { return }
+    $script:StopState.Exit = $true
+    try { $Watcher.PowerShell.Stop() } catch { }
+    try { $Watcher.PowerShell.Dispose() } catch { }
+    try { $Watcher.Runspace.Close() } catch { }
+    try { $Watcher.Runspace.Dispose() } catch { }
+}
+
+# 정지 요청 확인: 정지 키를 눌렀거나(감시 스레드가 기록), STOP.txt 파일이 있으면 정지.
+# 두 방법 중 아무거나 쓰면 됨.
 function Test-StopRequested {
+    if ($script:StopState.KeyPressed) { return $true }
     return (Test-Path -LiteralPath $StopFlagPath)
 }
 
@@ -897,6 +967,9 @@ $resultsForm = New-ResultsWindow
 $resultsForm.Show()
 [System.Windows.Forms.Application]::DoEvents()
 
+$stopKeyWatcher = Start-StopKeyWatcher -VirtualKeyCode $StopKeyCode
+Write-Log "정지 방법: $StopKeyName 키 누르기(어느 창에 있든 상관없음) 또는 STOP.txt 파일 생성. 둘 다 '처리 중인 1건을 끝낸 뒤' 정지합니다."
+
 $results = New-Object System.Collections.Generic.List[pscustomobject]
 $total = $rows.Count
 $index = 0
@@ -905,7 +978,8 @@ foreach ($row in $rows) {
     $index++
 
     if (Test-StopRequested) {
-        Write-Log "STOP.txt 감지됨. 현재까지 결과를 저장하고 종료합니다."
+        $stopReason = if ($script:StopState.KeyPressed) { "$StopKeyName 키 감지됨" } else { "STOP.txt 감지됨" }
+        Write-Log "$stopReason. 현재까지 결과를 저장하고 종료합니다."
         break
     }
 
@@ -919,6 +993,8 @@ foreach ($row in $rows) {
     Add-ResultToWindow -ResultsForm $resultsForm -Row $r
     [System.Windows.Forms.Application]::DoEvents()
 }
+
+Stop-StopKeyWatcher -Watcher $stopKeyWatcher
 
 $successCount = ($results | Where-Object { $_.처리결과 -eq "성공" }).Count
 $failCount = ($results | Where-Object { $_.처리결과 -eq "실패" }).Count
